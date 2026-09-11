@@ -1,0 +1,6 @@
+{
+  "name": "Vector Music Recommender",
+  "description": "Music recommendation engine powered by acoustic vector embeddings (danceability, vibe, valence, tempo), user listening history synthesis, dynamic genre atmospheres, and PostgreSQL pgvector architecture.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
