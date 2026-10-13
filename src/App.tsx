@@ -51,10 +51,14 @@ import { UserHeaderMenu } from './components/UserHeaderMenu';
 import { TasteProfileModal } from './components/TasteProfileModal';
 import { UserDetailsModal } from './components/UserDetailsModal';
 import { SettingsModal } from './components/SettingsModal';
+import { PlaylistsView } from './components/PlaylistsView';
+import { AddToPlaylistModal } from './components/AddToPlaylistModal';
+import { relationalDbService } from './services/vectorDb/relationalDbService';
+import { ListMusic, Sparkles as SparklesIcon } from 'lucide-react';
 
 export default function App() {
-  // Navigation tabs
-  const [activeTab, setActiveTab] = useState<'recommender' | 'dashboard' | 'library'>('recommender');
+  // Navigation tabs (including Relational Playlists)
+  const [activeTab, setActiveTab] = useState<'recommender' | 'dashboard' | 'library' | 'playlists'>('recommender');
 
   // Landing / Splash screen state
   const [showLandingPage, setShowLandingPage] = useState<boolean>(true);
@@ -62,11 +66,14 @@ export default function App() {
   // Active Relational Database User
   const [activeUser, setActiveUser] = useState<UserDbRecord | null>(null);
 
-  // Dynamic Catalog State (seeded with Kaggle Spotify real tracks)
-  const [catalog, setCatalog] = useState<Song[]>(MOCK_SONG_CATALOG);
+  // Dynamic Catalog State (populated from complete relational database)
+  const [catalog, setCatalog] = useState<Song[]>(() => relationalDbService.getAllSongs());
 
   // Playback state
-  const [currentSong, setCurrentSong] = useState<Song>(MOCK_SONG_CATALOG[0]!);
+  const [currentSong, setCurrentSong] = useState<Song>(() => {
+    const all = relationalDbService.getAllSongs();
+    return all.length > 0 ? all[0]! : MOCK_SONG_CATALOG[0]!;
+  });
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
 
   // Vector Tuner & Query state (initialized from default or active user's taste vector)
@@ -78,10 +85,10 @@ export default function App() {
   const [blendHistoryRatio, setBlendHistoryRatio] = useState<number>(0.35); // 35% history blend
   const [vectorMetric, setVectorMetric] = useState<VectorDistanceMetric>('cosine');
 
-  // User Listening History State
+  // User Listening History & Liked Songs State (synchronized with relational database)
   const [history, setHistory] = useState<HistoryRecord[]>(INITIAL_LISTENING_HISTORY);
-  const [likedSongIds, setLikedSongIds] = useState<Set<string>>(
-    new Set(['pop-01', 'sw-01', 'lo-01', 'soul-01'])
+  const [likedSongIds, setLikedSongIds] = useState<Set<string>>(() =>
+    relationalDbService.getLikedSongCodes(1)
   );
 
   // Modals & Drawers
@@ -89,6 +96,8 @@ export default function App() {
   const [spotifyEmbedSong, setSpotifyEmbedSong] = useState<Song | null>(null);
   const [isArchitectureModalOpen, setIsArchitectureModalOpen] = useState(false);
   const [isRealSongSearchOpen, setIsRealSongSearchOpen] = useState(false);
+  const [songToAddToPlaylist, setSongToAddToPlaylist] = useState<Song | null>(null);
+  const [isAddToPlaylistOpen, setIsAddToPlaylistOpen] = useState(false);
 
   // Dedicated Top-Right User Dropdown Modals
   const [isTasteProfileModalOpen, setIsTasteProfileModalOpen] = useState(false);
@@ -130,6 +139,20 @@ export default function App() {
 
     return () => unsubscribe();
   }, []);
+
+  // Synchronize catalog and liked songs from relational database engine
+  useEffect(() => {
+    const syncDb = () => {
+      const songs = relationalDbService.getAllSongs();
+      setCatalog(songs);
+      pgVectorService.setCatalog(songs);
+      const uid = activeUser?.user_id || 1;
+      setLikedSongIds(relationalDbService.getLikedSongCodes(uid));
+    };
+    syncDb();
+    const unsub = relationalDbService.subscribe(syncDb);
+    return () => unsub();
+  }, [activeUser?.user_id]);
 
   // 2. Synthesize user taste profile vector from listening history
   const userTasteProfile = useMemo(() => {
@@ -206,9 +229,12 @@ export default function App() {
     }
   };
 
-  // Record a listen in history when a song is played
+  // Record a listen in history when a song is played (updates state & listen_history table)
   const recordListeningSession = useCallback(
     (song: Song, completion: number = 100) => {
+      const uid = activeUser?.user_id || 1;
+      relationalDbService.recordListen(uid, song.id, completion >= 80 ? 5 : undefined);
+
       setHistory((prev) => {
         const newRecord: HistoryRecord = {
           id: `hist-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -222,7 +248,7 @@ export default function App() {
         return [newRecord, ...prev.slice(0, 49)];
       });
     },
-    [likedSongIds]
+    [activeUser?.user_id, likedSongIds]
   );
 
   // Play / Pause toggle
@@ -261,20 +287,15 @@ export default function App() {
     }
   }, [catalog, currentSong.id, isPlaying, recordListeningSession]);
 
-  // Like toggle
+  // Like toggle: persists to PostgreSQL playlist_tracks & listen_history tables
   const handleToggleLike = (songId: string) => {
-    setLikedSongIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(songId)) {
-        next.delete(songId);
-      } else {
-        next.add(songId);
-      }
-      return next;
-    });
+    const uid = activeUser?.user_id || 1;
+    const isNowLiked = relationalDbService.toggleLikeSong(uid, songId);
+    const updatedLiked = relationalDbService.getLikedSongCodes(uid);
+    setLikedSongIds(updatedLiked);
 
     setHistory((prev) =>
-      prev.map((r) => (r.songId === songId ? { ...r, userLiked: !likedSongIds.has(songId) } : r))
+      prev.map((r) => (r.songId === songId ? { ...r, userLiked: isNowLiked } : r))
     );
   };
 
@@ -286,13 +307,19 @@ export default function App() {
     recordListeningSession(song, Math.floor(Math.random() * 30 + 70));
   };
 
-  // Dynamically add new real song to vector database
+  // Dynamically add new real song to 11 relational database tables & pgvector
   const handleAddSongToCatalog = (newSong: Song) => {
+    relationalDbService.insertSong(newSong);
     pgVectorService.insertSong(newSong);
-    setCatalog((prev) => {
-      if (prev.some((s) => s.id === newSong.id)) return prev;
-      return [newSong, ...prev];
-    });
+    setCatalog(relationalDbService.getAllSongs());
+  };
+
+  // Dynamically expand catalog with fresh seeds across genres
+  const handleExpandCatalog = (count: number = 8) => {
+    relationalDbService.expandCatalogWithGeneratedSeeds(count);
+    const all = relationalDbService.getAllSongs();
+    setCatalog(all);
+    pgVectorService.setCatalog(all);
   };
 
   // Filter catalog for Library tab
@@ -421,6 +448,18 @@ export default function App() {
               <span className="hidden sm:inline">Catalog ({catalog.length})</span>
               <span className="sm:hidden">({catalog.length})</span>
             </button>
+
+            <button
+              onClick={() => setActiveTab('playlists')}
+              className={`px-3.5 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+                activeTab === 'playlists'
+                  ? 'bg-white/15 text-white shadow-sm ring-1 ring-white/10'
+                  : 'text-white/60 hover:text-white'
+              }`}
+            >
+              <ListMusic className="w-3.5 h-3.5 text-pink-400" />
+              <span>Playlists</span>
+            </button>
           </nav>
 
           {/* Right Header Area: Search, Architecture & TOP RIGHT USER DATA WITH TASTE PROFILE UNDERNEATH */}
@@ -436,11 +475,11 @@ export default function App() {
 
             <button
               onClick={() => setIsArchitectureModalOpen(true)}
-              className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 hover:text-white text-xs font-medium transition-all"
-              title="PostgreSQL 8D Schema & Architecture"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-xs font-medium transition-all shadow-sm"
+              title="Inspect all 11 PostgreSQL tables, live rows, and SQL audit log"
             >
-              <Database className="w-3.5 h-3.5 text-indigo-400" />
-              <span className="hidden xl:inline">pgvector</span>
+              <Database className="w-3.5 h-3.5 text-cyan-400" />
+              <span>DB Tables (11)</span>
             </button>
 
             {/* Top Right User Data with Taste Profile Underneath & Dropdown */}
@@ -587,6 +626,10 @@ export default function App() {
                     onLikeToggle={handleToggleLike}
                     onInspectVector={(s) => setInspectingSong(s)}
                     onOpenSpotify={(s) => setSpotifyEmbedSong(s)}
+                    onAddToPlaylist={(s) => {
+                      setSongToAddToPlaylist(s);
+                      setIsAddToPlaylistOpen(true);
+                    }}
                   />
                 ))}
               </div>
@@ -631,13 +674,24 @@ export default function App() {
                 </p>
               </div>
 
-              <button
-                onClick={() => setIsRealSongSearchOpen(true)}
-                className="px-4 py-2.5 rounded-xl bg-white text-black font-semibold text-xs transition-all flex items-center gap-2 hover:bg-white/90 shadow-lg shadow-white/10 shrink-0"
-              >
-                <Search className="w-4 h-4" />
-                <span>Search &amp; Import Any Track</span>
-              </button>
+              <div className="flex items-center gap-2.5 shrink-0">
+                <button
+                  onClick={() => handleExpandCatalog(8)}
+                  className="px-3.5 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-medium text-xs transition-all flex items-center gap-1.5 shadow-md shadow-violet-600/20"
+                  title="Generate 8 fresh diverse tracks and insert into tracks and audio_features tables"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>Grow Catalog (+8)</span>
+                </button>
+
+                <button
+                  onClick={() => setIsRealSongSearchOpen(true)}
+                  className="px-4 py-2.5 rounded-xl bg-white text-black font-semibold text-xs transition-all flex items-center gap-2 hover:bg-white/90 shadow-lg shadow-white/10"
+                >
+                  <Search className="w-4 h-4" />
+                  <span>Search &amp; Import Any Track</span>
+                </button>
+              </div>
             </div>
 
             {/* Clear user-facing explanation of the '39' count and local memory cache purpose */}
@@ -651,14 +705,14 @@ export default function App() {
                     Why does the Catalog indicate ({catalog.length})?
                   </h3>
                   <span className="px-2 py-0.5 rounded-md text-[10px] font-mono uppercase tracking-wider bg-amber-400/15 text-amber-300 border border-amber-400/30 font-medium">
-                    Local Memory Cache
+                    Local Memory Cache &amp; Relational Engine
                   </span>
                 </div>
                 <p className="text-white/80 leading-relaxed">
-                  The <strong className="text-amber-300 font-semibold">{catalog.length}</strong> count represents the current subset of curated tracks available in the local memory cache before being fully synced or scaled to the broader 1.2M+ dataset.
+                  The <strong className="text-amber-300 font-semibold">{catalog.length}</strong> count represents the active in-memory cached subset of tracks loaded into the PostgreSQL <code className="text-violet-300 font-mono">tracks</code> and <code className="text-violet-300 font-mono">audio_features</code> tables.
                 </p>
                 <p className="text-white/55 leading-relaxed text-[11px]">
-                  Keeping this curated subset directly in active memory guarantees sub-millisecond 8D vector cosine distance queries and instant browser audio synthesis. As you search and import new songs via <span className="text-white/85 font-medium">"Search &amp; Import Any Track"</span>, they are loaded into this cache and automatically increment this count.
+                  Keeping this curated subset directly in active memory guarantees sub-millisecond 8D vector cosine distance queries and instant browser audio synthesis. You can expand variety at any time using <span className="text-white/85 font-medium">"Grow Catalog (+8)"</span> or import real music worldwide via <span className="text-white/85 font-medium">"Search &amp; Import Any Track"</span>. Every new song executes real <code className="text-emerald-300 font-mono">INSERT INTO</code> relational queries!
                 </p>
               </div>
             </div>
@@ -721,10 +775,29 @@ export default function App() {
                   onLikeToggle={handleToggleLike}
                   onInspectVector={(s) => setInspectingSong(s)}
                   onOpenSpotify={(s) => setSpotifyEmbedSong(s)}
+                  onAddToPlaylist={(s) => {
+                    setSongToAddToPlaylist(s);
+                    setIsAddToPlaylistOpen(true);
+                  }}
                 />
               ))}
             </div>
           </div>
+        )}
+
+        {/* VIEW 4: Relational Playlists & Collections */}
+        {activeTab === 'playlists' && (
+          <PlaylistsView
+            currentUser={displayUser}
+            currentSong={currentSong}
+            isPlaying={isPlaying}
+            onPlaySong={handlePlayToggle}
+            onToggleLike={handleToggleLike}
+            likedSongIds={likedSongIds}
+            allSongs={catalog}
+            onInspectVector={(s) => setInspectingSong(s)}
+            onOpenArchitecture={() => setIsArchitectureModalOpen(true)}
+          />
         )}
       </main>
 
@@ -888,6 +961,17 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Dedicated Add to Playlist Modal */}
+      <AddToPlaylistModal
+        isOpen={isAddToPlaylistOpen}
+        onClose={() => {
+          setIsAddToPlaylistOpen(false);
+          setSongToAddToPlaylist(null);
+        }}
+        song={songToAddToPlaylist}
+        currentUser={displayUser}
+      />
     </div>
   );
 }

@@ -12,19 +12,28 @@ import {
   VECTOR_DIMENSIONS_META,
   VECTOR_DIMENSION_KEYS,
 } from './vectorMath';
+import { relationalDbService } from './relationalDbService';
 import { PgVectorQueryOptions, PgVectorResponse } from './types';
 
 export class PgVectorEngine {
   private songs: Song[];
 
-  constructor(initialCatalog: Song[] = MOCK_SONG_CATALOG) {
-    this.songs = [...initialCatalog];
+  constructor(initialCatalog?: Song[]) {
+    this.songs = initialCatalog || relationalDbService.getAllSongs();
+    if (!this.songs || this.songs.length === 0) {
+      this.songs = [...MOCK_SONG_CATALOG];
+    }
   }
 
   public insertSong(song: Song): void {
     if (!this.songs.some((s) => s.id === song.id)) {
       this.songs.unshift(song);
     }
+    relationalDbService.insertSong(song);
+  }
+
+  public setCatalog(songs: Song[]): void {
+    this.songs = [...songs];
   }
 
   public getCatalog(): Song[] {

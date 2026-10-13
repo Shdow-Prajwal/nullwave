@@ -1,5 +1,5 @@
 import React from 'react';
-import { Heart, Play, Pause, Activity, Disc, Sparkles, Music, Radio, ListPlus, Check } from 'lucide-react';
+import { Heart, Play, Pause, Activity, Disc, Sparkles, Music, Radio, ListPlus } from 'lucide-react';
 import { Song, RecommendationResult } from '../types/music';
 import { GENRE_THEMES } from '../data/mockCatalog';
 
@@ -14,7 +14,6 @@ interface SongCardProps {
   onInspectVector: (song: Song) => void;
   onOpenSpotify?: (song: Song) => void;
   onAddToPlaylist?: (song: Song) => void;
-  isInPlaylist?: boolean;
 }
 
 export const SongCard: React.FC<SongCardProps> = ({
@@ -28,7 +27,6 @@ export const SongCard: React.FC<SongCardProps> = ({
   onInspectVector,
   onOpenSpotify,
   onAddToPlaylist,
-  isInPlaylist,
 }) => {
   const genreTheme = GENRE_THEMES[song.genre] || GENRE_THEMES.Synthwave;
   const matchPercent = recommendation ? Math.round(recommendation.similarityScore * 100) : null;
@@ -237,28 +235,10 @@ export const SongCard: React.FC<SongCardProps> = ({
           {onAddToPlaylist && (
             <button
               onClick={() => onAddToPlaylist(song)}
-              title={
-                isInPlaylist
-                  ? 'In active playlist'
-                  : 'Add to active playlist (fires PostgreSQL trigger)'
-              }
-              className={`px-2 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1 ${
-                isInPlaylist
-                  ? 'text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20'
-                  : 'text-white/60 hover:text-white hover:bg-white/5'
-              }`}
+              className="p-1.5 rounded-lg text-white/50 hover:text-violet-300 hover:bg-violet-500/10 transition-colors"
+              title="Add to playlist"
             >
-              {isInPlaylist ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="hidden sm:inline">In List</span>
-                </>
-              ) : (
-                <>
-                  <ListPlus className="w-3.5 h-3.5 text-violet-400" />
-                  <span>+ Playlist</span>
-                </>
-              )}
+              <ListPlus className="w-3.5 h-3.5" />
             </button>
           )}
 
@@ -274,10 +254,10 @@ export const SongCard: React.FC<SongCardProps> = ({
 
           <button
             onClick={() => onInspectVector(song)}
-            className="px-2 py-1.5 rounded-lg text-xs font-medium text-white/60 hover:text-white hover:bg-white/5 transition-colors flex items-center gap-1"
+            className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-white/60 hover:text-white hover:bg-white/5 transition-colors flex items-center gap-1"
           >
             <Activity className="w-3.5 h-3.5 text-violet-400" />
-            <span className="hidden sm:inline">Vector</span>
+            <span>Vector</span>
           </button>
         </div>
       </div>
