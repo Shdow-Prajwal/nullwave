@@ -377,121 +377,39 @@ export default function App() {
 
   // ── 2. Render Main Application Studio ──
   return (
-    <div className="min-h-screen bg-[#14111a] text-[#f2ece4] flex flex-col relative pb-36 font-sans aura-app-shell">
+    <div className="min-h-screen bg-[#101116] text-[#f5f3f7] flex flex-col relative pb-36 font-sans aura-app-shell">
       {/* Dynamic Atmospheric Background */}
       <DynamicGenreBackground currentGenre={currentSong.genre} isPlaying={isPlaying} />
 
-      {/* Top Sleek Glass Navigation Bar */}
-      <header className="sticky top-0 z-40 px-4 sm:px-6 pt-4">
-        <div className="glass-surface max-w-7xl mx-auto px-4 sm:px-5 h-14 rounded-full flex items-center justify-between gap-3 transition-all duration-300">
-          {/* Brand Logo with Glowing Waveform Icon - Clicking returns to Landing */}
-          <div
-            className="flex items-center gap-3 cursor-pointer group"
-            onClick={() => setShowLandingPage(true)}
-            title="Return to Splash / Landing Page"
-          >
-            <div className="w-9 h-9 rounded-full bg-gradient-to-r from-violet-500/30 to-indigo-500/30 border border-white/15 flex items-center justify-center shadow-lg shadow-indigo-500/20 group-hover:scale-105 transition-transform">
-              <Activity className="w-4 h-4 text-violet-200" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-base tracking-tight text-white group-hover:text-violet-200 transition-colors">
-                  VectorVibe
-                </span>
-              </div>
-              <p className="text-[11px] text-white/50 -mt-0.5 hidden sm:block">
-                Acoustic Embeddings &amp; Real Previews
-              </p>
-            </div>
-          </div>
-
-          {/* Center Navigation Tabs */}
-          <nav className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/10 text-xs">
-            <button
-              onClick={() => setActiveTab('recommender')}
-              className={`px-3.5 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
-                activeTab === 'recommender'
-                  ? 'bg-white/15 text-white shadow-sm ring-1 ring-white/10'
-                  : 'text-white/60 hover:text-white'
-              }`}
-            >
-              <Sparkles className="w-3.5 h-3.5 text-violet-400" />
-              <span>Discover</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('dashboard')}
-              className={`px-3.5 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
-                activeTab === 'dashboard'
-                  ? 'bg-white/15 text-white shadow-sm ring-1 ring-white/10'
-                  : 'text-white/60 hover:text-white'
-              }`}
-            >
-              <BarChart3 className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="hidden sm:inline">Taste Profile</span>
-              <span className="sm:hidden">Taste</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('library')}
-              title={`Catalog contains ${catalog.length} curated tracks in the active local memory cache`}
-              className={`px-3.5 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
-                activeTab === 'library'
-                  ? 'bg-white/15 text-white shadow-sm ring-1 ring-white/10'
-                  : 'text-white/60 hover:text-white'
-              }`}
-            >
-              <Music className="w-3.5 h-3.5 text-amber-400" />
-              <span className="hidden sm:inline">Catalog ({catalog.length})</span>
-              <span className="sm:hidden">({catalog.length})</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('playlists')}
-              className={`px-3.5 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
-                activeTab === 'playlists'
-                  ? 'bg-white/15 text-white shadow-sm ring-1 ring-white/10'
-                  : 'text-white/60 hover:text-white'
-              }`}
-            >
-              <ListMusic className="w-3.5 h-3.5 text-pink-400" />
-              <span>Playlists</span>
-            </button>
-          </nav>
-
-          {/* Right Header Area: Search, Architecture & TOP RIGHT USER DATA WITH TASTE PROFILE UNDERNEATH */}
-          <div className="flex items-center gap-2.5">
-            <button
-              onClick={() => setIsRealSongSearchOpen(true)}
-              className="hidden lg:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white text-xs font-medium transition-all shadow-sm"
-              title="Search and import any real song worldwide"
-            >
-              <Search className="w-3.5 h-3.5 text-violet-400" />
-              <span>Search</span>
-            </button>
-
-            <button
-              onClick={() => setIsArchitectureModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-xs font-medium transition-all shadow-sm"
-              title="Inspect all 11 PostgreSQL tables, live rows, and SQL audit log"
-            >
-              <Database className="w-3.5 h-3.5 text-cyan-400" />
-              <span>DB Tables (11)</span>
-            </button>
-
-            {/* Top Right User Data with Taste Profile Underneath & Dropdown */}
-            <UserHeaderMenu
-              user={displayUser}
-              tasteProfile={userTasteProfile}
-              onOpenTasteProfileModal={() => setIsTasteProfileModalOpen(true)}
-              onOpenUserDetailsModal={() => setIsUserDetailsModalOpen(true)}
-              onOpenSettingsModal={() => setIsSettingsModalOpen(true)}
-              onOpenNewUserPrompt={() => setIsCreateUserPromptOpen(true)}
-              onGoToLandingPage={() => setShowLandingPage(true)}
-            />
-          </div>
+      {/* Aura-inspired sidebar navigation; the existing views and controls remain unchanged. */}
+      <header className="aura-sidebar-shell fixed left-0 top-0 z-40 flex h-screen w-[88px] flex-col items-center border-r border-white/10 px-3 py-5">
+        <div
+          className="aura-brand-mark group mb-10 flex size-12 cursor-pointer items-center justify-center rounded-2xl"
+          onClick={() => setShowLandingPage(true)}
+          title="Return to Splash / Landing Page"
+        >
+          <Activity className="size-5 text-violet-200 transition-transform duration-500 group-hover:rotate-12 group-hover:scale-110" />
         </div>
-      </header>
+        <nav className="flex flex-1 flex-col items-center gap-3" aria-label="Primary navigation">
+          <button aria-label="Discover" title="Discover" onClick={() => setActiveTab('recommender')} className={`aura-nav-item ${activeTab === 'recommender' ? 'is-active' : ''}`}><Sparkles /></button>
+          <button aria-label="Taste Profile" title="Taste Profile" onClick={() => setActiveTab('dashboard')} className={`aura-nav-item ${activeTab === 'dashboard' ? 'is-active' : ''}`}><BarChart3 /></button>
+          <button aria-label="Catalog" title={`Catalog contains ${catalog.length} curated tracks`} onClick={() => setActiveTab('library')} className={`aura-nav-item ${activeTab === 'library' ? 'is-active' : ''}`}><Music /></button>
+          <button aria-label="Playlists" title="Playlists" onClick={() => setActiveTab('playlists')} className={`aura-nav-item ${activeTab === 'playlists' ? 'is-active' : ''}`}><ListMusic /></button>
+          <button aria-label="Search songs" title="Search songs" onClick={() => setIsRealSongSearchOpen(true)} className="aura-nav-item"><Search /></button>
+          <button aria-label="Database tables" title="Database tables" onClick={() => setIsArchitectureModalOpen(true)} className="aura-nav-item"><Database /></button>
+        </nav>
+        <UserHeaderMenu
+          user={displayUser}
+          tasteProfile={userTasteProfile}
+          onOpenTasteProfileModal={() => setIsTasteProfileModalOpen(true)}
+          onOpenUserDetailsModal={() => setIsUserDetailsModalOpen(true)}
+          onOpenSettingsModal={() => setIsSettingsModalOpen(true)}
+          onOpenNewUserPrompt={() => setIsCreateUserPromptOpen(true)}
+          onGoToLandingPage={() => setShowLandingPage(true)}
+        />
+      </header> 
+
+      {/* Existing main content keeps its original grid and section order. */}
 
       {/* Main Content Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 flex-1 w-full space-y-8">
