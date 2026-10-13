@@ -35,7 +35,7 @@ export const SongCard: React.FC<SongCardProps> = ({
   return (
     <div
       id={`song-card-${song.id}`}
-      className={`group relative rounded-2xl p-4 backdrop-blur-xl transition-all duration-300 flex flex-col justify-between ${
+      className={`group aura-surface relative rounded-2xl p-4 backdrop-blur-xl transition-all duration-300 flex flex-col justify-between ${
         isCurrentSong
           ? 'bg-[#0b0b10]/90 border border-violet-500/50 ring-1 ring-violet-500/40 shadow-xl shadow-violet-500/10'
           : 'bg-[#0b0b10]/70 supports-[backdrop-filter]:bg-[#0b0b10]/50 border border-white/10 ring-1 ring-white/5 hover:border-white/20 hover:bg-white/[0.04]'

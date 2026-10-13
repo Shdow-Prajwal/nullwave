@@ -140,7 +140,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   return (
     <div
       id="bottom-audio-player-bar"
-      className="fixed bottom-0 left-0 right-0 z-40 bg-[#0b0b10]/90 supports-[backdrop-filter]:bg-[#0b0b10]/80 border-t border-white/10 ring-1 ring-white/5 backdrop-blur-2xl px-4 sm:px-6 py-3 shadow-[0_-12px_40px_rgba(0,0,0,0.8)]"
+      className="fixed bottom-4 left-4 right-4 z-40 glass-surface rounded-2xl px-4 sm:px-6 py-3 shadow-[0_-12px_40px_rgba(0,0,0,0.45)]"
     >
       {/* Interactive Progress Bar */}
       <div
