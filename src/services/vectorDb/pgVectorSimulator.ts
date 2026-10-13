@@ -97,23 +97,28 @@ export class PgVectorEngine {
     const simParam = vectorToPgVectorString(queryArr);
 
     // Build the corresponding realistic PostgreSQL + pgvector SQL query
-    let sql = `SELECT id, title, artist, genre, bpm, embedding,\n`;
+    let sql = `SELECT t.track_id, t.title, COALESCE(a.name, 'Unknown Artist') AS artist,\n`;
+    sql += `       g.name AS genre, t.bpm, t.duration, af.feature_vector,\n`;
     if (metric === 'cosine') {
-      sql += `       1 - (embedding <=> $1::vector) AS cosine_similarity,\n`;
-      sql += `       (embedding <=> $1::vector) AS cosine_distance\n`;
+      sql += `       1 - (af.feature_vector <=> $1::vector) AS cosine_similarity,\n`;
+      sql += `       (af.feature_vector <=> $1::vector) AS cosine_distance\n`;
     } else if (metric === 'l2') {
-      sql += `       (embedding <-> $1::vector) AS l2_distance\n`;
+      sql += `       (af.feature_vector <-> $1::vector) AS l2_distance\n`;
     } else {
-      sql += `       (embedding <#> $1::vector) * -1 AS inner_product\n`;
+      sql += `       (af.feature_vector <#> $1::vector) * -1 AS inner_product\n`;
     }
-    sql += `FROM songs\n`;
+    sql += `FROM tracks t\n`;
+    sql += `JOIN audio_features af ON t.track_id = af.track_id\n`;
+    sql += `LEFT JOIN genre g ON t.genre_id = g.genre_id\n`;
+    sql += `LEFT JOIN performs p ON t.track_id = p.track_id AND p.role = 'main'\n`;
+    sql += `LEFT JOIN artist a ON p.artist_id = a.artist_id\n`;
 
     const whereClauses: string[] = [];
     if (options.filterGenre && options.filterGenre !== 'All') {
-      whereClauses.push(`genre = '${options.filterGenre}'`);
+      whereClauses.push(`g.name = '${options.filterGenre}'`);
     }
     if (options.excludeSongIds && options.excludeSongIds.length > 0) {
-      whereClauses.push(`id NOT IN (${options.excludeSongIds.map((id) => `'${id}'`).join(', ')})`);
+      whereClauses.push(`t.track_id NOT IN (${options.excludeSongIds.map((id) => `'${id}'`).join(', ')})`);
     }
 
     if (whereClauses.length > 0) {
@@ -121,14 +126,14 @@ export class PgVectorEngine {
     }
 
     const operator = metric === 'cosine' ? '<=>' : metric === 'l2' ? '<->' : '<#>';
-    sql += `ORDER BY embedding ${operator} $1::vector\nLIMIT ${limit};`;
+    sql += `ORDER BY af.feature_vector ${operator} $1::vector\nLIMIT ${limit};`;
 
     return {
       items: filteredScored,
       plan: {
         querySql: sql,
         parameters: [simParam, limit],
-        indexUsed: indexType === 'HNSW' ? 'idx_songs_embedding_hnsw' : 'idx_songs_embedding_ivfflat',
+        indexUsed: indexType === 'HNSW' ? 'idx_audio_feature_vec_hnsw' : 'idx_audio_feature_vec_ivfflat',
         indexMetric: 'vector_cosine_ops',
         estimatedCost: 14.25,
         executionTimeMs: Number((elapsedMs + 0.4).toFixed(2)), // realistic index query time

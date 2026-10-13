@@ -63,25 +63,25 @@ export const PgVectorArchitectureDrawer: React.FC<PgVectorArchitectureDrawerProp
   return (
     <div
       id="pgvector-architecture-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-xl"
     >
-      <div className="relative w-full max-w-4xl max-h-[90vh] bg-neutral-900 border border-neutral-800 rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+      <div className="relative w-full max-w-4xl max-h-[90vh] bg-[#0b0b10] border border-white/10 ring-1 ring-white/5 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="p-5 sm:p-6 border-b border-neutral-800/80 flex items-center justify-between gap-4">
+        <div className="p-5 sm:p-6 border-b border-white/10 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-2xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+            <div className="p-2.5 rounded-xl bg-violet-500/10 text-violet-300 border border-violet-500/20">
               <Database className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-bold text-white tracking-tight">
+                <h2 className="text-lg font-semibold text-white tracking-tight">
                   PostgreSQL + pgvector Architecture
                 </h2>
-                <span className="px-2 py-0.5 rounded-md text-[11px] font-mono font-medium bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                <span className="px-2 py-0.5 rounded-md text-[11px] font-mono font-medium bg-violet-500/15 text-violet-300 border border-violet-500/20">
                   Ready for Production
                 </span>
               </div>
-              <p className="text-xs text-neutral-400">
+              <p className="text-xs text-white/60">
                 Vector embeddings schema, HNSW indexing specifications, and live KNN query execution
               </p>
             </div>
@@ -89,7 +89,7 @@ export const PgVectorArchitectureDrawer: React.FC<PgVectorArchitectureDrawerProp
 
           <button
             onClick={onClose}
-            className="p-2 rounded-xl text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+            className="p-2 rounded-xl text-white/50 hover:text-white hover:bg-white/10 transition-colors"
             aria-label="Close modal"
           >
             ✕
@@ -97,13 +97,13 @@ export const PgVectorArchitectureDrawer: React.FC<PgVectorArchitectureDrawerProp
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex items-center gap-2 px-6 pt-3 border-b border-neutral-800/80 bg-neutral-950/40 text-xs overflow-x-auto">
+        <div className="flex items-center gap-2 px-6 pt-3 border-b border-white/10 bg-white/[0.02] text-xs overflow-x-auto">
           <button
             onClick={() => setActiveTab('architecture')}
             className={`px-3.5 py-2 rounded-t-xl font-medium transition-all flex items-center gap-1.5 border-b-2 ${
               activeTab === 'architecture'
-                ? 'text-cyan-400 border-cyan-400 bg-neutral-900'
-                : 'text-neutral-400 border-transparent hover:text-neutral-200'
+                ? 'text-violet-300 border-violet-400 bg-white/[0.04]'
+                : 'text-white/50 border-transparent hover:text-white'
             }`}
           >
             <Layers className="w-3.5 h-3.5" />
@@ -114,8 +114,8 @@ export const PgVectorArchitectureDrawer: React.FC<PgVectorArchitectureDrawerProp
             onClick={() => setActiveTab('sql')}
             className={`px-3.5 py-2 rounded-t-xl font-medium transition-all flex items-center gap-1.5 border-b-2 ${
               activeTab === 'sql'
-                ? 'text-cyan-400 border-cyan-400 bg-neutral-900'
-                : 'text-neutral-400 border-transparent hover:text-neutral-200'
+                ? 'text-violet-300 border-violet-400 bg-white/[0.04]'
+                : 'text-white/50 border-transparent hover:text-white'
             }`}
           >
             <Terminal className="w-3.5 h-3.5" />
@@ -126,8 +126,8 @@ export const PgVectorArchitectureDrawer: React.FC<PgVectorArchitectureDrawerProp
             onClick={() => setActiveTab('schema')}
             className={`px-3.5 py-2 rounded-t-xl font-medium transition-all flex items-center gap-1.5 border-b-2 ${
               activeTab === 'schema'
-                ? 'text-cyan-400 border-cyan-400 bg-neutral-900'
-                : 'text-neutral-400 border-transparent hover:text-neutral-200'
+                ? 'text-violet-300 border-violet-400 bg-white/[0.04]'
+                : 'text-white/50 border-transparent hover:text-white'
             }`}
           >
             <Code2 className="w-3.5 h-3.5" />
@@ -138,8 +138,8 @@ export const PgVectorArchitectureDrawer: React.FC<PgVectorArchitectureDrawerProp
             onClick={() => setActiveTab('benchmark')}
             className={`px-3.5 py-2 rounded-t-xl font-medium transition-all flex items-center gap-1.5 border-b-2 ${
               activeTab === 'benchmark'
-                ? 'text-cyan-400 border-cyan-400 bg-neutral-900'
-                : 'text-neutral-400 border-transparent hover:text-neutral-200'
+                ? 'text-violet-300 border-violet-400 bg-white/[0.04]'
+                : 'text-white/50 border-transparent hover:text-white'
             }`}
           >
             <Cpu className="w-3.5 h-3.5" />
@@ -167,7 +167,7 @@ export const PgVectorArchitectureDrawer: React.FC<PgVectorArchitectureDrawerProp
                       Normalizes acoustic properties into an 8D vector [0.0 - 1.0]
                     </div>
                     <div className="font-mono text-[10px] text-neutral-500 truncate">
-                      dance, energy, valence...
+                      energy, dance, valence...
                     </div>
                   </div>
 
@@ -176,7 +176,7 @@ export const PgVectorArchitectureDrawer: React.FC<PgVectorArchitectureDrawerProp
                       <span>2. PostgreSQL + pgvector</span>
                     </div>
                     <div className="text-[11px] text-neutral-400">
-                      Stores vectors as native <code className="text-indigo-300">vector(8)</code> column
+                      1:1 <code className="text-indigo-300">audio_features</code> table with <code className="text-indigo-300">vector(8)</code>
                     </div>
                     <div className="font-mono text-[10px] text-neutral-500">
                       CREATE EXTENSION vector;
@@ -185,10 +185,10 @@ export const PgVectorArchitectureDrawer: React.FC<PgVectorArchitectureDrawerProp
 
                   <div className="p-3.5 rounded-xl bg-neutral-900 border border-neutral-800 space-y-1.5">
                     <div className="text-xs font-bold text-cyan-400 flex items-center gap-1">
-                      <span>3. HNSW Index</span>
+                      <span>3. IVFFlat & HNSW Indexes</span>
                     </div>
                     <div className="text-[11px] text-neutral-400">
-                      Graph index with <code className="text-cyan-300">vector_cosine_ops</code> (m=16, ef=64)
+                      Cosine distance index (<code className="text-cyan-300">vector_cosine_ops</code>)
                     </div>
                     <div className="font-mono text-[10px] text-neutral-500">
                       Sub-millisecond KNN
@@ -197,14 +197,76 @@ export const PgVectorArchitectureDrawer: React.FC<PgVectorArchitectureDrawerProp
 
                   <div className="p-3.5 rounded-xl bg-neutral-900 border border-neutral-800 space-y-1.5">
                     <div className="text-xs font-bold text-emerald-400 flex items-center gap-1">
-                      <span>4. Cosine Similarity</span>
+                      <span>4. Relational Multi-Join</span>
                     </div>
                     <div className="text-[11px] text-neutral-400">
-                      Computes similarity via <code className="text-emerald-300">1 - (v1 &lt;=&gt; v2)</code>
+                      Joins <code className="text-emerald-300">tracks</code>, <code className="text-emerald-300">artist</code>, <code className="text-emerald-300">genre</code>
                     </div>
                     <div className="font-mono text-[10px] text-neutral-500">
                       Ranked recommendations
                     </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Relational Entity Blueprint Breakdown */}
+              <div className="p-5 rounded-2xl bg-neutral-950/80 border border-neutral-800 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold text-neutral-400 uppercase tracking-wider flex items-center gap-2">
+                    <Layers className="w-3.5 h-3.5 text-violet-400" />
+                    <span>Relational Database Blueprint (8D Vector Model)</span>
+                  </div>
+                  <span className="text-[11px] font-mono text-violet-400 bg-violet-500/10 px-2 py-0.5 rounded border border-violet-500/20">
+                    PostgreSQL 15+ &bull; pgvector
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/10 space-y-2">
+                    <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-indigo-400"></span>
+                      <span>Strong Entities</span>
+                    </div>
+                    <ul className="text-[11px] space-y-1 text-neutral-400">
+                      <li><strong className="text-neutral-200">users</strong>: user_id, username, email, <code className="text-violet-300">taste_vector(8)</code></li>
+                      <li><strong className="text-neutral-200">tracks</strong>: track_id, title, duration, bpm, genre_id</li>
+                      <li><strong className="text-neutral-200">genre</strong>: genre_id, name</li>
+                      <li><strong className="text-neutral-200">artist</strong>: artist_id, name, bio</li>
+                      <li><strong className="text-neutral-200">moods</strong>: mood_id, label</li>
+                      <li><strong className="text-neutral-200">playlists</strong>: playlist_id, title, user_id</li>
+                    </ul>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/10 space-y-2">
+                    <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-cyan-400"></span>
+                      <span>1:1 Audio Features</span>
+                    </div>
+                    <ul className="text-[11px] space-y-1 text-neutral-400">
+                      <li><strong className="text-neutral-200">track_id</strong> (PK, FK &rarr; tracks)</li>
+                      <li>energy, danceability, valence [0.0 - 1.0]</li>
+                      <li>acousticness, instrumentalness [0.0 - 1.0]</li>
+                      <li>liveness, speechiness, tempo_norm [0.0 - 1.0]</li>
+                      <li className="pt-1 text-cyan-300 font-mono text-[10px]">
+                        feature_vector VECTOR(8)
+                      </li>
+                      <li className="text-[10px] text-neutral-500">
+                        IVFFLAT & HNSW vector_cosine_ops
+                      </li>
+                    </ul>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/10 space-y-2">
+                    <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                      <span>M:N Junction Tables</span>
+                    </div>
+                    <ul className="text-[11px] space-y-1 text-neutral-400">
+                      <li><strong className="text-neutral-200">performs</strong>: (artist_id, track_id, role)</li>
+                      <li><strong className="text-neutral-200">track_moods</strong>: (track_id, mood_id)</li>
+                      <li><strong className="text-neutral-200">playlist_tracks</strong>: (playlist_id, track_id, position)</li>
+                      <li><strong className="text-neutral-200">listen_history</strong>: user_id, track_id, rating [1..5], last_played</li>
+                    </ul>
                   </div>
                 </div>
               </div>
@@ -306,7 +368,7 @@ export const PgVectorArchitectureDrawer: React.FC<PgVectorArchitectureDrawerProp
                   </button>
                   <button
                     onClick={() => handleCopySql(PGVECTOR_SCHEMA_SQL)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-cyan-600 hover:bg-cyan-500 text-white transition-colors"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-violet-600 hover:bg-violet-500 text-white transition-colors"
                   >
                     {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                     <span>{copied ? 'Copied' : 'Copy SQL'}</span>
@@ -334,11 +396,11 @@ export const PgVectorArchitectureDrawer: React.FC<PgVectorArchitectureDrawerProp
                     onClick={() => onChangeMetric('cosine')}
                     className={`p-4 rounded-2xl text-left border transition-all ${
                       metric === 'cosine'
-                        ? 'bg-cyan-500/10 border-cyan-500/40 ring-1 ring-cyan-500/30'
+                        ? 'bg-violet-500/10 border-violet-500/40 ring-1 ring-violet-500/30'
                         : 'bg-neutral-950 border-neutral-800 hover:border-neutral-700'
                     }`}
                   >
-                    <div className="font-mono text-xs font-bold text-cyan-400 mb-1">&lt;=&gt; Cosine Distance</div>
+                    <div className="font-mono text-xs font-bold text-violet-300 mb-1">&lt;=&gt; Cosine Distance</div>
                     <div className="text-xs font-semibold text-white mb-1">Recommended for Music</div>
                     <div className="text-[11px] text-neutral-400">
                       Measures angle between vector features regardless of total magnitude.
@@ -349,7 +411,7 @@ export const PgVectorArchitectureDrawer: React.FC<PgVectorArchitectureDrawerProp
                     onClick={() => onChangeMetric('l2')}
                     className={`p-4 rounded-2xl text-left border transition-all ${
                       metric === 'l2'
-                        ? 'bg-cyan-500/10 border-cyan-500/40 ring-1 ring-cyan-500/30'
+                        ? 'bg-purple-500/10 border-purple-500/40 ring-1 ring-purple-500/30'
                         : 'bg-neutral-950 border-neutral-800 hover:border-neutral-700'
                     }`}
                   >
@@ -364,7 +426,7 @@ export const PgVectorArchitectureDrawer: React.FC<PgVectorArchitectureDrawerProp
                     onClick={() => onChangeMetric('inner_product')}
                     className={`p-4 rounded-2xl text-left border transition-all ${
                       metric === 'inner_product'
-                        ? 'bg-cyan-500/10 border-cyan-500/40 ring-1 ring-cyan-500/30'
+                        ? 'bg-amber-500/10 border-amber-500/40 ring-1 ring-amber-500/30'
                         : 'bg-neutral-950 border-neutral-800 hover:border-neutral-700'
                     }`}
                   >
