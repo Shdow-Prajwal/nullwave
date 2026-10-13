@@ -170,7 +170,7 @@ export const VectorTuner: React.FC<VectorTunerProps> = ({
   return (
     <div
       id="vector-query-tuner"
-      className="rounded-2xl backdrop-blur-xl bg-[#0b0b10]/70 supports-[backdrop-filter]:bg-[#0b0b10]/50 border border-white/10 ring-1 ring-white/5 shadow-2xl transition-all duration-300 overflow-hidden"
+      className="glass-surface rounded-[1.5rem] transition-all duration-300 overflow-hidden"
     >
       {/* ── Collapsible Header Bar ── */}
       <div className="p-4 sm:p-5 flex items-center justify-between gap-4 border-b border-white/5">
@@ -354,48 +354,32 @@ export const VectorTuner: React.FC<VectorTunerProps> = ({
           </div>
 
           {/* 8-Dimensional Sliders Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4 pt-1">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 pt-1">
             {VECTOR_DIMENSION_KEYS.map((key) => {
               const meta = VECTOR_DIMENSIONS_META[key];
               const rawVal = targetVector[key];
-              const displayVal =
-                key === 'beatsBpmNormalized'
-                  ? `${normalizedToBpm(rawVal)} BPM`
-                  : `${Math.round(rawVal * 100)}%`;
+              const displayVal = key === 'beatsBpmNormalized' ? `${normalizedToBpm(rawVal)}` : `${Math.round(rawVal * 100)}%`;
 
               return (
-                <div key={key} className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-medium text-white/90 flex items-center gap-1.5">
-                      <span
-                        className="w-2 h-2 rounded-full shadow-sm"
-                        style={{ backgroundColor: meta.color }}
-                      />
-                      <span>{meta.label}</span>
-                    </span>
-                    <span className="font-mono text-xs font-medium px-2 py-0.5 rounded-md bg-white/5 border border-white/5 text-white/80">
-                      {displayVal}
-                    </span>
+                <label key={key} className="group flex min-h-48 flex-col items-center gap-2 rounded-2xl border border-white/5 bg-white/[0.025] px-2 py-3 transition-colors hover:border-white/15">
+                  <span className="font-mono text-sm font-medium" style={{ color: meta.color }}>{displayVal}</span>
+                  <span className="text-center text-[10px] uppercase tracking-wide text-white/55">{meta.label}</span>
+                  <div className="relative flex flex-1 items-center justify-center py-2">
+                    <div className="absolute h-full w-px bg-white/10" />
+                    <input
+                      aria-label={meta.label}
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={rawVal}
+                      onChange={(e) => handleDimensionChange(key, parseFloat(e.target.value))}
+                      className="relative z-10 h-2 w-32 -rotate-90 cursor-pointer appearance-none rounded-full bg-white/10 accent-[var(--slider-color)] sm:w-36"
+                      style={{ '--slider-color': meta.color } as React.CSSProperties}
+                    />
                   </div>
-
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.01"
-                    value={rawVal}
-                    onChange={(e) => handleDimensionChange(key, parseFloat(e.target.value))}
-                    className="w-full h-1.5 bg-white/10 rounded-lg cursor-pointer transition-all"
-                    style={{
-                      accentColor: meta.color,
-                    }}
-                  />
-
-                  <div className="flex justify-between text-[10px] text-white/40">
-                    <span>{meta.lowLabel}</span>
-                    <span>{meta.highLabel}</span>
-                  </div>
-                </div>
+                  <span className="flex w-full justify-between text-[9px] text-white/35"><span>{meta.lowLabel}</span><span>{meta.highLabel}</span></span>
+                </label>
               );
             })}
           </div>

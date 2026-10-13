@@ -377,13 +377,13 @@ export default function App() {
 
   // ── 2. Render Main Application Studio ──
   return (
-    <div className="min-h-screen bg-[#0b0b10] text-zinc-100 flex flex-col relative pb-36 font-sans selection:bg-violet-500/30 selection:text-violet-200">
+    <div className="min-h-screen bg-[#14111a] text-[#f2ece4] flex flex-col relative pb-36 font-sans">
       {/* Dynamic Atmospheric Background */}
       <DynamicGenreBackground currentGenre={currentSong.genre} isPlaying={isPlaying} />
 
       {/* Top Sleek Glass Navigation Bar */}
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#0b0b10]/80 supports-[backdrop-filter]:bg-[#0b0b10]/60 backdrop-blur-xl">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+      <header className="sticky top-0 z-40 px-4 sm:px-6 pt-4">
+        <div className="glass-surface max-w-7xl mx-auto px-4 sm:px-5 h-14 rounded-full flex items-center justify-between gap-3 transition-all duration-300">
           {/* Brand Logo with Glowing Waveform Icon - Clicking returns to Landing */}
           <div
             className="flex items-center gap-3 cursor-pointer group"
@@ -397,9 +397,6 @@ export default function App() {
               <div className="flex items-center gap-2">
                 <span className="font-semibold text-base tracking-tight text-white group-hover:text-violet-200 transition-colors">
                   VectorVibe
-                </span>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-violet-500/15 text-violet-300 border border-violet-500/20">
-                  pgvector
                 </span>
               </div>
               <p className="text-[11px] text-white/50 -mt-0.5 hidden sm:block">
@@ -509,8 +506,8 @@ export default function App() {
                     <Sparkles className="w-3.5 h-3.5 text-violet-400" />
                     <span>Acoustic pgvector · Real Studio Previews</span>
                   </div>
-                  <h1 className="text-3xl sm:text-5xl lg:text-6xl font-semibold tracking-tight text-white leading-tight">
-                    Discover Without Limits.
+                  <h1 className="font-display text-4xl sm:text-6xl lg:text-7xl font-semibold tracking-tight text-[#f2ece4] leading-[0.95]">
+                    Find the feeling.
                   </h1>
                   <p className="text-sm sm:text-base text-white/70 max-w-xl">
                     High-dimensional music discovery that learns your mood, energy, and acoustic taste
