@@ -1,10 +1,10 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;500;600;700;800&family=Unbounded:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --font-display: 'Fraunces', Georgia, serif;
-  --font-sans: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --font-display: 'Unbounded', 'Syne', ui-sans-serif, sans-serif;
+  --font-sans: 'Syne', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'DM Mono', monospace;
 }
 
 @layer base {
@@ -20,8 +20,8 @@
   }
 
   body {
-    font-family: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif;
-    background: var(--ink);
+    font-family: 'Syne', ui-sans-serif, system-ui, sans-serif;
+    background: #08090f;
     color: var(--paper);
   }
 
@@ -32,7 +32,7 @@
   ::selection { background: rgba(210, 152, 101, 0.35); color: var(--paper); }
 }
 
-.font-display { font-family: 'Fraunces', Georgia, serif; }
+.font-display { font-family: 'Unbounded', 'Syne', ui-sans-serif, sans-serif; letter-spacing: -0.035em; }
 
 .glass-surface {
   background: color-mix(in srgb, var(--raised) 78%, transparent);
@@ -294,6 +294,25 @@
   .aura-nav-item.is-active::after { right: auto; bottom: -8px; left: 50%; width: 22px; height: 3px; transform: translateX(-50%); }
   .aura-app-shell > main { margin-left: 0; padding-bottom: 76px; }
 }
+
+/* Search overlay inherits the Aura glass language without changing its layout. */
+.search-modal-backdrop {
+  background: radial-gradient(circle at 50% 18%, rgba(139,92,246,.16), transparent 34%), rgba(5, 6, 12, .88);
+  backdrop-filter: blur(18px) saturate(1.5);
+  animation: searchBackdropIn .45s ease both;
+}
+.search-modal-panel {
+  background: linear-gradient(135deg, rgba(34, 28, 48, .94), rgba(16, 18, 29, .96) 58%, rgba(23, 35, 52, .94));
+  border: 1px solid rgba(214, 238, 154, .2);
+  box-shadow: 0 30px 100px rgba(0,0,0,.6), 0 0 0 1px rgba(182,167,255,.08), inset 0 1px rgba(255,255,255,.12);
+  animation: searchPanelIn .55s cubic-bezier(.16,1,.3,1) both;
+}
+.search-modal-panel input:focus { border-color: rgba(214,238,154,.75); box-shadow: 0 0 0 3px rgba(214,238,154,.12), 0 0 28px rgba(182,167,255,.12); }
+.search-modal-panel button, .search-modal-panel a { transition: transform .3s cubic-bezier(.16,1,.3,1), background-color .3s ease, border-color .3s ease, color .3s ease, box-shadow .3s ease; }
+.search-modal-panel button:hover, .search-modal-panel a:hover { transform: translateY(-2px); }
+.search-modal-panel .group:hover { border-color: rgba(214,238,154,.35); box-shadow: 0 12px 30px rgba(0,0,0,.2), inset 0 1px rgba(255,255,255,.08); }
+@keyframes searchBackdropIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes searchPanelIn { from { opacity: 0; transform: translateY(18px) scale(.97); filter: blur(8px); } to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); } }
 
 /* Custom scrollbars */
 ::-webkit-scrollbar {
