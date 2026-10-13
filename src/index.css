@@ -147,6 +147,106 @@
 .points_wrapper .point:nth-child(3) { left: 60%; opacity: 0.9; animation-duration: 2.1s; animation-delay: 0s; }
 .points_wrapper .point:nth-child(4) { left: 80%; opacity: 0.8; animation-duration: 2.7s; animation-delay: 0.4s; }
 
+/* Aura visual layer: styling-only polish for the existing VectorVibe layout */
+:root {
+  --aura-violet: #8b5cf6;
+  --aura-blue: #3b82f6;
+  --aura-cyan: #06b6d4;
+  --aura-border: rgba(255, 255, 255, 0.1);
+}
+
+.aura-surface {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  background: linear-gradient(135deg, rgba(255,255,255,.065), rgba(255,255,255,.018) 52%, rgba(139,92,246,.045));
+  border-color: rgba(255,255,255,.12);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 18px 50px rgba(0,0,0,.24);
+  transition: transform .45s cubic-bezier(.4,0,.2,1), background .45s ease, border-color .45s ease, box-shadow .45s ease;
+}
+
+.aura-surface::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(115deg, transparent 20%, rgba(255,255,255,.08) 48%, transparent 72%);
+  transform: translateX(-120%);
+  transition: opacity .3s ease, transform .8s ease;
+}
+
+.aura-surface:hover {
+  transform: translateY(-3px);
+  background: linear-gradient(135deg, rgba(255,255,255,.09), rgba(255,255,255,.028) 52%, rgba(139,92,246,.08));
+  border-color: rgba(255,255,255,.2);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 24px 60px rgba(0,0,0,.34), 0 0 28px rgba(99,102,241,.08);
+}
+
+.aura-surface:hover::before { opacity: 1; transform: translateX(120%); }
+
+.aura-reveal {
+  opacity: 0;
+  animation: auraSlideUp .8s cubic-bezier(.16,1,.3,1) forwards;
+}
+
+.aura-reveal:nth-child(2) { animation-delay: .08s; }
+.aura-reveal:nth-child(3) { animation-delay: .16s; }
+.aura-reveal:nth-child(4) { animation-delay: .24s; }
+
+@keyframes auraSlideUp {
+  from { opacity: 0; transform: translateY(24px); filter: blur(6px); }
+  to { opacity: 1; transform: translateY(0); filter: blur(0); }
+}
+
+.aura-title {
+  background: linear-gradient(100deg, #fff 8%, #ddd6fe 48%, #67e8f9 100%);
+  background-size: 180% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: auraTextShift 8s ease-in-out infinite;
+}
+
+@keyframes auraTextShift {
+  0%, 100% { background-position: 0% center; }
+  50% { background-position: 100% center; }
+}
+
+.aura-button { position: relative; overflow: hidden; transition: transform .3s cubic-bezier(.4,0,.2,1), box-shadow .3s ease, border-color .3s ease; }
+.aura-button::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(105deg, transparent 25%, rgba(255,255,255,.16) 50%, transparent 75%); transform: translateX(-120%); transition: transform .7s ease; }
+.aura-button:hover { transform: translateY(-2px) scale(1.015); box-shadow: 0 12px 32px rgba(99,102,241,.22); }
+.aura-button:hover::after { transform: translateX(120%); }
+
+#dynamic-genre-ambient-canvas::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: .22;
+  background-image: radial-gradient(rgba(255,255,255,.45) .7px, transparent .7px);
+  background-size: 46px 46px;
+  mask-image: linear-gradient(to bottom, black, transparent 82%);
+}
+
+#vector-query-tuner,
+#personalized-music-dashboard,
+[id^="song-card-"] { animation: auraSlideUp .75s cubic-bezier(.16,1,.3,1) both; }
+
+#vector-query-tuner:hover,
+#personalized-music-dashboard > div:hover,
+[id^="song-card-"]:hover { border-color: rgba(255,255,255,.22); }
+
+#personalized-music-dashboard > div,
+[id^="song-card-"] { transition: transform .4s cubic-bezier(.4,0,.2,1), box-shadow .4s ease, border-color .4s ease, background .4s ease; }
+#personalized-music-dashboard > div:hover { transform: translateY(-3px); box-shadow: 0 20px 55px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.12); }
+
+@media (prefers-reduced-motion: reduce) {
+  .aura-reveal, .aura-title, #vector-query-tuner, #personalized-music-dashboard, [id^="song-card-"] { animation: none !important; opacity: 1; }
+  .aura-surface:hover, .aura-button:hover, #personalized-music-dashboard > div:hover, [id^="song-card-"]:hover { transform: none; }
+}
+
 /* Custom scrollbars */
 ::-webkit-scrollbar {
   width: 6px;

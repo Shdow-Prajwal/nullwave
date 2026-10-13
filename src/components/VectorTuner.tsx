@@ -170,7 +170,7 @@ export const VectorTuner: React.FC<VectorTunerProps> = ({
   return (
     <div
       id="vector-query-tuner"
-      className="glass-surface rounded-[1.5rem] transition-all duration-300 overflow-hidden"
+      className="glass-surface aura-surface rounded-[1.5rem] transition-all duration-300 overflow-hidden"
     >
       {/* ── Collapsible Header Bar ── */}
       <div className="p-4 sm:p-5 flex items-center justify-between gap-4 border-b border-white/5">

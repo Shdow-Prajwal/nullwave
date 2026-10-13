@@ -377,7 +377,7 @@ export default function App() {
 
   // ── 2. Render Main Application Studio ──
   return (
-    <div className="min-h-screen bg-[#14111a] text-[#f2ece4] flex flex-col relative pb-36 font-sans">
+    <div className="min-h-screen bg-[#14111a] text-[#f2ece4] flex flex-col relative pb-36 font-sans aura-app-shell">
       {/* Dynamic Atmospheric Background */}
       <DynamicGenreBackground currentGenre={currentSong.genre} isPlaying={isPlaying} />
 

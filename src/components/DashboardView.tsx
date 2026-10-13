@@ -43,7 +43,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const { tasteVector, moodTrend, genreAffinity, dominantVibeDescription } = tasteProfile;
 
   return (
-    <div id="personalized-music-dashboard" className="space-y-6">
+    <div id="personalized-music-dashboard" className="space-y-6 aura-dashboard">
       {/* Top Hero Banner: Personalized Taste Overview */}
       <div className="relative rounded-2xl p-6 sm:p-8 backdrop-blur-xl bg-[#0b0b10]/70 supports-[backdrop-filter]:bg-[#0b0b10]/50 border border-white/10 ring-1 ring-white/5 overflow-hidden shadow-2xl">
         <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-br from-violet-500/15 via-fuchsia-500/10 to-transparent rounded-full blur-3xl pointer-events-none" />
