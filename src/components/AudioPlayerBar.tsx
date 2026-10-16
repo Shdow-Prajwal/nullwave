@@ -55,7 +55,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
         const bars: number[] = [];
         for (let i = 0; i < 16; i++) {
           const val = data[i * step] ?? 0;
-          bars.push(Math.max(4, (val / 255) * 28));
+          bars.push(Math.max(4, (val / 255) * 26));
         }
         setFrequencies(bars);
       } else {
@@ -140,31 +140,27 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   return (
     <div
       id="bottom-audio-player-bar"
-      className="fixed bottom-0 left-0 right-0 z-40 bg-neutral-950/95 border-t border-neutral-800/90 backdrop-blur-2xl px-4 sm:px-6 py-3 shadow-[0_-10px_30px_rgba(0,0,0,0.6)]"
+      className="fixed bottom-4 left-4 right-4 z-40 glass-surface rounded-2xl px-4 sm:px-6 py-3 shadow-[0_-12px_40px_rgba(0,0,0,0.45)]"
     >
       {/* Interactive Progress Bar */}
       <div
-        className="absolute top-0 left-0 right-0 h-1 bg-neutral-800 cursor-pointer group"
+        className="absolute top-0 left-0 right-0 h-1 bg-white/10 cursor-pointer group"
         onClick={handleSeek}
       >
         <div
-          className="h-full transition-all duration-150 relative group-hover:h-1.5"
+          className="h-full transition-all duration-150 relative group-hover:h-1.5 bg-gradient-to-r from-violet-500 to-indigo-500"
           style={{
             width: `${progressPercent}%`,
-            backgroundColor: genreTheme.primary,
           }}
         >
-          <span
-            className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
-            style={{ backgroundColor: genreTheme.primary }}
-          />
+          <span className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full opacity-0 group-hover:opacity-100 transition-opacity bg-white shadow-md shadow-violet-500/50" />
         </div>
       </div>
 
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
         {/* Left: Song Info & Real Album Art */}
         <div className="flex items-center gap-3 min-w-0 flex-1 sm:flex-initial sm:w-72">
-          <div className="relative w-12 h-12 rounded-xl overflow-hidden shrink-0 shadow-md border border-neutral-800 bg-neutral-900">
+          <div className="relative w-12 h-12 rounded-xl overflow-hidden shrink-0 shadow-lg border border-white/10 bg-black/50">
             {currentSong.coverImage ? (
               <img
                 src={currentSong.coverImage}
@@ -188,12 +184,12 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
 
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <span className="font-bold text-sm text-white truncate">
+              <span className="font-semibold text-sm text-white truncate">
                 {currentSong.title}
               </span>
             </div>
 
-            <div className="flex items-center gap-1.5 text-xs text-neutral-400 truncate">
+            <div className="flex items-center gap-1.5 text-xs text-white/60 truncate">
               <span className="truncate">{currentSong.artist}</span>
               <span>·</span>
               <span
@@ -209,7 +205,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
                 <Radio className="w-2.5 h-2.5" />
                 <span>{isReal ? 'Studio Preview' : 'Procedural Synth'}</span>
               </span>
-              <span className="text-[10px] text-neutral-500 font-mono">
+              <span className="text-[10px] text-white/40 font-mono">
                 {currentSong.bpm} BPM
               </span>
             </div>
@@ -217,7 +213,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
 
           <button
             onClick={() => onToggleLike(currentSong.id)}
-            className="p-1.5 rounded-lg text-neutral-400 hover:text-white transition-colors ml-1 shrink-0"
+            className="p-1.5 rounded-lg text-white/40 hover:text-white transition-colors ml-1 shrink-0"
             aria-label={isLiked ? 'Unlike track' : 'Like track'}
           >
             <Heart
@@ -233,7 +229,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
           <div className="flex items-center gap-4">
             <button
               onClick={onPrevious}
-              className="p-2 text-neutral-400 hover:text-white transition-colors"
+              className="p-2 text-white/60 hover:text-white transition-colors"
               aria-label="Previous track"
             >
               <SkipBack className="w-4 h-4" />
@@ -241,23 +237,19 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
 
             <button
               onClick={onTogglePlay}
-              className="w-10 h-10 rounded-full flex items-center justify-center text-white transition-transform hover:scale-105 active:scale-95 shadow-lg"
-              style={{
-                backgroundColor: genreTheme.primary,
-                boxShadow: `0 0 20px ${genreTheme.glowColor}`,
-              }}
+              className="w-10 h-10 rounded-full flex items-center justify-center text-white transition-all hover:scale-105 active:scale-95 shadow-lg bg-gradient-to-tr from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 border border-white/20 shadow-violet-500/30"
               aria-label={isPlaying ? 'Pause' : 'Play'}
             >
               {isPlaying ? (
-                <Pause className="w-5 h-5 fill-current" />
+                <Pause className="w-4 h-4 fill-current" />
               ) : (
-                <Play className="w-5 h-5 fill-current ml-0.5" />
+                <Play className="w-4 h-4 fill-current ml-0.5" />
               )}
             </button>
 
             <button
               onClick={onNext}
-              className="p-2 text-neutral-400 hover:text-white transition-colors"
+              className="p-2 text-white/60 hover:text-white transition-colors"
               aria-label="Next track"
             >
               <SkipForward className="w-4 h-4" />
@@ -265,24 +257,24 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
           </div>
 
           {/* Real-time Equalizer Waveform Bars */}
-          <div className="flex items-end justify-center gap-1 h-6 w-44">
+          <div className="flex items-end justify-center gap-1 h-5 w-44">
             {frequencies.map((h, i) => (
               <div
                 key={i}
                 className="w-1.5 rounded-full transition-all duration-75"
                 style={{
                   height: `${h}px`,
-                  backgroundColor: isPlaying ? genreTheme.primary : '#525252',
-                  opacity: isPlaying ? 0.95 : 0.4,
+                  backgroundColor: isPlaying ? '#a78bfa' : 'rgba(255,255,255,0.2)',
+                  boxShadow: isPlaying ? '0 0 8px rgba(167, 139, 250, 0.5)' : 'none',
                 }}
               />
             ))}
           </div>
 
-          <div className="flex items-center justify-between w-full text-[11px] font-mono text-neutral-500 px-2">
+          <div className="flex items-center justify-between w-full text-[11px] font-mono text-white/50 px-2">
             <span>{formatTime(progressSec)}</span>
-            <span className="text-[10px] text-neutral-400 font-semibold">
-              Kaggle Spotify
+            <span className="text-[10px] text-white/40 font-normal">
+              pgvector Stream
             </span>
             <span>{formatTime(durationSec)}</span>
           </div>
@@ -293,7 +285,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
           {onOpenSpotify && (
             <button
               onClick={() => onOpenSpotify(currentSong)}
-              className="px-2.5 py-1.5 rounded-xl bg-[#1DB954]/15 border border-[#1DB954]/30 hover:border-[#1DB954]/60 text-[#1DB954] text-xs font-semibold transition-all flex items-center gap-1.5"
+              className="px-2.5 py-1.5 rounded-xl bg-[#1DB954]/15 border border-[#1DB954]/30 hover:border-[#1DB954]/60 text-[#1DB954] text-xs font-medium transition-all flex items-center gap-1.5"
               title="Spotify Embed Player"
             >
               <Music className="w-3.5 h-3.5" />
@@ -303,17 +295,17 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
 
           <button
             onClick={() => onInspectVector(currentSong)}
-            className="px-2.5 py-1.5 rounded-xl bg-neutral-900 border border-neutral-800 hover:border-neutral-700 text-neutral-300 hover:text-white text-xs font-medium transition-all flex items-center gap-1.5"
+            className="px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 text-white/70 hover:text-white text-xs font-medium transition-all flex items-center gap-1.5"
             title="Inspect 8D Vector Alignment"
           >
-            <Activity className="w-3.5 h-3.5 text-cyan-400" />
+            <Activity className="w-3.5 h-3.5 text-violet-400" />
             <span>Vectors</span>
           </button>
 
           <div className="flex items-center gap-2 pl-1">
             <button
               onClick={handleToggleMute}
-              className="text-neutral-400 hover:text-white transition-colors"
+              className="text-white/60 hover:text-white transition-colors"
               aria-label={isMuted ? 'Unmute' : 'Mute'}
             >
               {isMuted || volume === 0 ? (
@@ -330,7 +322,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
               step="0.02"
               value={volume}
               onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
-              className="w-16 accent-cyan-400 h-1 bg-neutral-800 rounded cursor-pointer"
+              className="w-16 accent-indigo-400 h-1 bg-white/10 rounded cursor-pointer"
             />
           </div>
         </div>

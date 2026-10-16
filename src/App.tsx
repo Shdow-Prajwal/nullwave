@@ -12,8 +12,13 @@ import {
   Activity,
   PlusCircle,
   Radio,
-  Clock,
+  AudioWaveform,
   Layers,
+  ArrowRight,
+  User,
+  X,
+  ChevronRight,
+  Info,
 } from 'lucide-react';
 import { Song, MusicVector, HistoryRecord, RecommendationResult, MusicGenre } from './types/music';
 import { MOCK_SONG_CATALOG, INITIAL_LISTENING_HISTORY, GENRE_THEMES } from './data/mockCatalog';
@@ -24,8 +29,14 @@ import {
   musicVectorToArray,
   arrayToMusicVector,
   bpmToNormalized,
+  vectorToPgVectorString,
 } from './services/vectorDb/vectorMath';
 import { PgVectorQueryPlan, VectorDistanceMetric } from './services/vectorDb/types';
+import {
+  userDbService,
+  UserDbRecord,
+  DEFAULT_TASTE_VECTOR_ARRAY,
+} from './services/vectorDb/userDbService';
 import { DynamicGenreBackground } from './components/DynamicGenreBackground';
 import { AudioPlayerBar } from './components/AudioPlayerBar';
 import { SongCard } from './components/SongCard';
@@ -35,42 +46,49 @@ import { PgVectorArchitectureDrawer } from './components/PgVectorArchitectureDra
 import { VectorInspectorModal } from './components/VectorInspectorModal';
 import { SpotifyEmbedModal } from './components/SpotifyEmbedModal';
 import { RealSongSearchModal } from './components/RealSongSearchModal';
-import { NullwaveHero } from './components/NullwaveHero';
-import { ScheduleStationsSection } from './components/ScheduleStationsSection';
-import { SignalChainSection } from './components/SignalChainSection';
-import { AudioBedMixerSection } from './components/AudioBedMixerSection';
+import { LandingPage } from './components/LandingPage';
+import { UserHeaderMenu } from './components/UserHeaderMenu';
+import { TasteProfileModal } from './components/TasteProfileModal';
+import { UserDetailsModal } from './components/UserDetailsModal';
+import { SettingsModal } from './components/SettingsModal';
+import { PlaylistsView } from './components/PlaylistsView';
+import { AddToPlaylistModal } from './components/AddToPlaylistModal';
+import { relationalDbService } from './services/vectorDb/relationalDbService';
+import { ListMusic, Sparkles as SparklesIcon } from 'lucide-react';
 
 export default function App() {
-  // Navigation tabs
-  const [activeTab, setActiveTab] = useState<'recommender' | 'stations' | 'dashboard' | 'library'>('recommender');
+  // Navigation tabs (including Relational Playlists)
+  const [activeTab, setActiveTab] = useState<'recommender' | 'dashboard' | 'library' | 'playlists'>('recommender');
 
-  // Dynamic Catalog State (seeded with Kaggle Spotify 39 real tracks)
-  const [catalog, setCatalog] = useState<Song[]>(MOCK_SONG_CATALOG);
+  // Landing / Splash screen state
+  const [showLandingPage, setShowLandingPage] = useState<boolean>(true);
+
+  // Active Relational Database User
+  const [activeUser, setActiveUser] = useState<UserDbRecord | null>(null);
+
+  // Dynamic Catalog State (populated from complete relational database)
+  const [catalog, setCatalog] = useState<Song[]>(() => relationalDbService.getAllSongs());
 
   // Playback state
-  const [currentSong, setCurrentSong] = useState<Song>(MOCK_SONG_CATALOG[0]!);
+  const [currentSong, setCurrentSong] = useState<Song>(() => {
+    const all = relationalDbService.getAllSongs();
+    return all.length > 0 ? all[0]! : MOCK_SONG_CATALOG[0]!;
+  });
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
 
-  // Vector Tuner & Query state
-  const [targetVector, setTargetVector] = useState<MusicVector>({
-    danceability: 0.82,
-    energy: 0.78,
-    valence: 0.65,
-    beatsBpmNormalized: bpmToNormalized(118),
-    vibeChillToHype: 0.72,
-    acousticness: 0.1,
-    instrumentalness: 0.75,
-    moodHarmonics: 0.45,
-  });
+  // Vector Tuner & Query state (initialized from default or active user's taste vector)
+  const [targetVector, setTargetVector] = useState<MusicVector>(() =>
+    arrayToMusicVector(DEFAULT_TASTE_VECTOR_ARRAY)
+  );
 
   const [selectedGenre, setSelectedGenre] = useState<string>('All');
-  const [blendHistoryRatio, setBlendHistoryRatio] = useState<number>(0.35); // 35% history blend by default
+  const [blendHistoryRatio, setBlendHistoryRatio] = useState<number>(0.35); // 35% history blend
   const [vectorMetric, setVectorMetric] = useState<VectorDistanceMetric>('cosine');
 
-  // User Listening History State (seeded with realistic past sessions)
+  // User Listening History & Liked Songs State (synchronized with relational database)
   const [history, setHistory] = useState<HistoryRecord[]>(INITIAL_LISTENING_HISTORY);
-  const [likedSongIds, setLikedSongIds] = useState<Set<string>>(
-    new Set(['pop-01', 'sw-01', 'lo-01', 'soul-01'])
+  const [likedSongIds, setLikedSongIds] = useState<Set<string>>(() =>
+    relationalDbService.getLikedSongCodes(1)
   );
 
   // Modals & Drawers
@@ -78,16 +96,70 @@ export default function App() {
   const [spotifyEmbedSong, setSpotifyEmbedSong] = useState<Song | null>(null);
   const [isArchitectureModalOpen, setIsArchitectureModalOpen] = useState(false);
   const [isRealSongSearchOpen, setIsRealSongSearchOpen] = useState(false);
+  const [songToAddToPlaylist, setSongToAddToPlaylist] = useState<Song | null>(null);
+  const [isAddToPlaylistOpen, setIsAddToPlaylistOpen] = useState(false);
+
+  // Dedicated Top-Right User Dropdown Modals
+  const [isTasteProfileModalOpen, setIsTasteProfileModalOpen] = useState(false);
+  const [isUserDetailsModalOpen, setIsUserDetailsModalOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [isCreateUserPromptOpen, setIsCreateUserPromptOpen] = useState(false);
 
   // Search filter for catalog library
   const [librarySearch, setLibrarySearch] = useState('');
 
-  // 1. Synthesize user taste profile vector from listening history
+  // Prompt state for creating a new user from inside the app
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserEmail, setNewUserEmail] = useState('');
+
+  // 1. Initialize active user from localStorage/relational db service
+  useEffect(() => {
+    const current = userDbService.getActiveUser();
+    if (current) {
+      setActiveUser(current);
+      if (current.taste_vector && current.taste_vector.length === 8) {
+        setTargetVector(arrayToMusicVector(current.taste_vector));
+      }
+    } else {
+      const all = userDbService.getAllUsers();
+      if (all.length > 0) {
+        const first = userDbService.setActiveUser(all[0]!.user_id);
+        setActiveUser(first);
+        if (first?.taste_vector) {
+          setTargetVector(arrayToMusicVector(first.taste_vector));
+        }
+      }
+    }
+
+    // Subscribe to DB updates
+    const unsubscribe = userDbService.subscribe(() => {
+      const updatedUser = userDbService.getActiveUser();
+      setActiveUser(updatedUser);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Synchronize catalog and liked songs from relational database engine
+  useEffect(() => {
+    const syncDb = () => {
+      const songs = relationalDbService.getAllSongs();
+      setCatalog(songs);
+      pgVectorService.setCatalog(songs);
+      const uid = activeUser?.user_id || 1;
+      setLikedSongIds(relationalDbService.getLikedSongCodes(uid));
+    };
+    syncDb();
+    const unsub = relationalDbService.subscribe(syncDb);
+    return () => unsub();
+  }, [activeUser?.user_id]);
+
+  // 2. Synthesize user taste profile vector from listening history
   const userTasteProfile = useMemo(() => {
     return pgVectorService.synthesizeUserTaste(history);
   }, [history]);
 
-  // 2. Compute effective query vector by blending target vector with user's history taste vector
+  // 3. Compute effective query vector by blending target vector with user's history taste vector
   const effectiveQueryVector = useMemo(() => {
     const targetArr = musicVectorToArray(targetVector);
     const historyArr = musicVectorToArray(userTasteProfile.tasteVector);
@@ -95,7 +167,7 @@ export default function App() {
     return arrayToMusicVector(blendedArr);
   }, [targetVector, userTasteProfile.tasteVector, blendHistoryRatio]);
 
-  // 3. Execute Vector KNN Query against pgvector engine
+  // 4. Execute Vector KNN Query against pgvector engine
   const { recommendations, queryPlan } = useMemo(() => {
     const response = pgVectorService.queryKNN(effectiveQueryVector, {
       metric: vectorMetric,
@@ -114,22 +186,92 @@ export default function App() {
     };
   }, [effectiveQueryVector, vectorMetric, selectedGenre, catalog]);
 
-  // Record a listen in history when a song is played
-  const recordListeningSession = useCallback((song: Song, completion: number = 100) => {
-    setHistory((prev) => {
-      const newRecord: HistoryRecord = {
-        id: `hist-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        songId: song.id,
-        song,
-        listenedAt: new Date().toISOString(),
-        completionPercent: completion,
-        userLiked: likedSongIds.has(song.id),
-        contextVibe: song.genre,
-      };
-      // Keep most recent 50 sessions
-      return [newRecord, ...prev.slice(0, 49)];
-    });
-  }, [likedSongIds]);
+  // 5. Connect Sliders to Database: Update targetVector AND write to PostgreSQL users table
+  const handleVectorChange = useCallback(
+    async (updated: MusicVector) => {
+      // 1. Immediately update UI local state for smooth slider response
+      setTargetVector(updated);
+
+      if (!activeUser) return;
+
+      const arr = musicVectorToArray(updated);
+
+      try {
+        // 2. Persist to local IndexedDB/Memory service if used
+        await userDbService.updateUserTasteVector(activeUser.user_id, arr);
+
+        // 3. Sync to Express Backend -> PostgreSQL DB
+        const response = await fetch(`http://localhost:3001/api/users/${activeUser.user_id}/taste-vector`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tasteVector: arr }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log('Taste vector synced to PostgreSQL:', data);
+      } catch (error) {
+        console.error('Failed to sync taste vector to backend:', error);
+      }
+    },
+    [activeUser]
+  );
+
+  // Create & launch user from Landing Page onboarding or In-App prompt
+  const handleCreateAndLaunchUser = (username: string, email?: string) => {
+    const newUser = userDbService.createUser(
+      username,
+      email,
+      musicVectorToArray(targetVector)
+    );
+    setActiveUser(newUser);
+    setShowLandingPage(false);
+  };
+
+  // Switch to another existing database user
+  const handleSwitchUser = (userId: number) => {
+    const user = userDbService.setActiveUser(userId);
+    if (user) {
+      setActiveUser(user);
+      if (user.taste_vector && user.taste_vector.length === 8) {
+        setTargetVector(arrayToMusicVector(user.taste_vector));
+      }
+    }
+  };
+
+  // Reset taste vector from Taste Profile Modal
+  const handleResetTasteVector = () => {
+    const defaultVec = arrayToMusicVector(DEFAULT_TASTE_VECTOR_ARRAY);
+    setTargetVector(defaultVec);
+    if (activeUser) {
+      userDbService.resetUserTasteVector(activeUser.user_id);
+    }
+  };
+
+  // Record a listen in history when a song is played (updates state & listen_history table)
+  const recordListeningSession = useCallback(
+    (song: Song, completion: number = 100) => {
+      const uid = activeUser?.user_id || 1;
+      relationalDbService.recordListen(uid, song.id, completion >= 80 ? 5 : undefined);
+
+      setHistory((prev) => {
+        const newRecord: HistoryRecord = {
+          id: `hist-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          songId: song.id,
+          song,
+          listenedAt: new Date().toISOString(),
+          completionPercent: completion,
+          userLiked: likedSongIds.has(song.id),
+          contextVibe: song.genre,
+        };
+        return [newRecord, ...prev.slice(0, 49)];
+      });
+    },
+    [activeUser?.user_id, likedSongIds]
+  );
 
   // Play / Pause toggle
   const handlePlayToggle = (song: Song) => {
@@ -167,21 +309,15 @@ export default function App() {
     }
   }, [catalog, currentSong.id, isPlaying, recordListeningSession]);
 
-  // Like toggle
+  // Like toggle: persists to PostgreSQL playlist_tracks & listen_history tables
   const handleToggleLike = (songId: string) => {
-    setLikedSongIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(songId)) {
-        next.delete(songId);
-      } else {
-        next.add(songId);
-      }
-      return next;
-    });
+    const uid = activeUser?.user_id || 1;
+    const isNowLiked = relationalDbService.toggleLikeSong(uid, songId);
+    const updatedLiked = relationalDbService.getLikedSongCodes(uid);
+    setLikedSongIds(updatedLiked);
 
-    // Update history record if present
     setHistory((prev) =>
-      prev.map((r) => (r.songId === songId ? { ...r, userLiked: !likedSongIds.has(songId) } : r))
+      prev.map((r) => (r.songId === songId ? { ...r, userLiked: isNowLiked } : r))
     );
   };
 
@@ -193,32 +329,19 @@ export default function App() {
     recordListeningSession(song, Math.floor(Math.random() * 30 + 70));
   };
 
-  // Dynamically add new real song to vector database
+  // Dynamically add new real song to 11 relational database tables & pgvector
   const handleAddSongToCatalog = (newSong: Song) => {
+    relationalDbService.insertSong(newSong);
     pgVectorService.insertSong(newSong);
-    setCatalog((prev) => {
-      if (prev.some((s) => s.id === newSong.id)) return prev;
-      return [newSong, ...prev];
-    });
+    setCatalog(relationalDbService.getAllSongs());
   };
 
-  // Callback when user clicks "SET" in the VectorTuner
-  const handleApplyVector = (newVector: MusicVector, newGenre: string, newBlend: number) => {
-    setTargetVector(newVector);
-    setSelectedGenre(newGenre);
-    setBlendHistoryRatio(newBlend);
-  };
-
-  // Station preset select handler from Stations/Schedule view
-  const handleSelectStation = (presetVector: MusicVector, genre: string, targetSong?: Song) => {
-    setTargetVector(presetVector);
-    setSelectedGenre(genre);
-    if (targetSong) {
-      setCurrentSong(targetSong);
-      audioSynthesizer.playSong(targetSong);
-      setIsPlaying(true);
-      recordListeningSession(targetSong);
-    }
+  // Dynamically expand catalog with fresh seeds across genres
+  const handleExpandCatalog = (count: number = 8) => {
+    relationalDbService.expandCatalogWithGeneratedSeeds(count);
+    const all = relationalDbService.getAllSongs();
+    setCatalog(all);
+    pgVectorService.setCatalog(all);
   };
 
   // Filter catalog for Library tab
@@ -240,185 +363,191 @@ export default function App() {
     return list;
   }, [catalog, selectedGenre, librarySearch]);
 
-  const currentTheme = GENRE_THEMES[currentSong.genre] || GENRE_THEMES.Synthwave;
+  // Fallback default user for header if user enters app directly
+  const displayUser: UserDbRecord = activeUser || {
+    user_id: 1,
+    username: 'Guest Explorer',
+    email: 'guest@vectorvibe.local',
+    created_at: new Date().toISOString(),
+    taste_vector: DEFAULT_TASTE_VECTOR_ARRAY,
+  };
 
+  // ── 1. Render Landing / Splash Page if requested ──
+  if (showLandingPage) {
+    return (
+      <>
+        <LandingPage
+          currentUser={activeUser}
+          onLaunchMainApp={() => setShowLandingPage(false)}
+          onCreateAndLaunchUser={handleCreateAndLaunchUser}
+          onOpenArchitecture={() => setIsArchitectureModalOpen(true)}
+          dominantVibe={userTasteProfile.dominantVibeDescription}
+          catalogLength={catalog.length}
+        />
+
+        <PgVectorArchitectureDrawer
+          isOpen={isArchitectureModalOpen}
+          onClose={() => setIsArchitectureModalOpen(false)}
+          currentQueryPlan={queryPlan}
+          targetVector={effectiveQueryVector}
+          metric={vectorMetric}
+          onChangeMetric={setVectorMetric}
+        />
+      </>
+    );
+  }
+
+  // ── 2. Render Main Application Studio ──
   return (
-    <div className="min-h-screen bg-[#0C0E12] text-[#E2E4E7] flex flex-col relative pb-32 font-mono selection:bg-[#FF6B6B]/30 selection:text-white">
-      {/* 1. Dynamic Genre Atmospheric Background */}
-      <DynamicGenreBackground
-        currentGenre={currentSong.genre}
-        isPlaying={isPlaying}
-      />
+    <div className="min-h-screen bg-[#101116] text-[#f5f3f7] flex flex-col relative pb-36 font-sans aura-app-shell">
+      {/* Dynamic Atmospheric Background */}
+      <DynamicGenreBackground currentGenre={currentSong.genre} isPlaying={isPlaying} />
 
-      {/* 2. Top Navigation Bar matching NULLWAVE aesthetics */}
-      <header className="sticky top-0 z-40 border-b border-[#232733] bg-[#0C0E12]/92 backdrop-blur-xl">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
-          {/* Brand Logo with NULLWAVE circle-slash badge */}
-          <div className="flex items-center gap-3">
-            <div
-              className="w-8 h-8 rounded-full border-2 border-white flex items-center justify-center relative shrink-0 cursor-pointer"
-              onClick={() => setActiveTab('recommender')}
-            >
-              <div className="w-4 h-[2px] bg-white absolute top-1/2 -translate-y-1/2" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-display font-bold text-base tracking-[0.2em] uppercase text-white">
-                  NULLWAVE
-                </span>
-                <span className="hidden sm:inline-block font-mono text-[10px] text-neutral-400">
-                  // VECTORVIBE
-                </span>
-              </div>
-              <p className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest -mt-0.5 hidden md:block">
-                Music for reading &amp; coding
-              </p>
-            </div>
-          </div>
-
-          {/* Center Navigation Tabs */}
-          <nav className="flex items-center gap-1 p-1 rounded-2xl bg-[#12141A] border border-[#232733] text-xs">
-            <button
-              onClick={() => setActiveTab('recommender')}
-              className={`px-3.5 py-1.5 rounded-xl font-display font-semibold uppercase tracking-wider text-xs transition-all flex items-center gap-1.5 ${
-                activeTab === 'recommender'
-                  ? 'bg-[#232733] text-white shadow-sm'
-                  : 'text-neutral-400 hover:text-white'
-              }`}
-            >
-              <Sparkles className="w-3.5 h-3.5 text-[#FF6B6B]" />
-              <span>Recommendations</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('stations')}
-              className={`px-3.5 py-1.5 rounded-xl font-display font-semibold uppercase tracking-wider text-xs transition-all flex items-center gap-1.5 ${
-                activeTab === 'stations'
-                  ? 'bg-[#232733] text-white shadow-sm'
-                  : 'text-neutral-400 hover:text-white'
-              }`}
-            >
-              <Radio className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Stations &amp; Schedule</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('dashboard')}
-              className={`px-3.5 py-1.5 rounded-xl font-display font-semibold uppercase tracking-wider text-xs transition-all flex items-center gap-1.5 ${
-                activeTab === 'dashboard'
-                  ? 'bg-[#232733] text-white shadow-sm'
-                  : 'text-neutral-400 hover:text-white'
-              }`}
-            >
-              <BarChart3 className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="hidden sm:inline">Taste Dashboard</span>
-              <span className="sm:hidden">Taste</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('library')}
-              className={`px-3.5 py-1.5 rounded-xl font-display font-semibold uppercase tracking-wider text-xs transition-all flex items-center gap-1.5 ${
-                activeTab === 'library'
-                  ? 'bg-[#232733] text-white shadow-sm'
-                  : 'text-neutral-400 hover:text-white'
-              }`}
-            >
-              <Music className="w-3.5 h-3.5 text-amber-400" />
-              <span className="hidden sm:inline">Catalog ({catalog.length})</span>
-              <span className="sm:hidden">({catalog.length})</span>
-            </button>
-          </nav>
-
-          {/* Right Action: Live On-air indicator & Global Search / pgvector modal */}
-          <div className="flex items-center gap-2.5">
-            {/* Live on air badge */}
-            <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#12141A] border border-[#232733] text-[11px] font-mono uppercase tracking-wider">
-              <span className="w-2 h-2 rounded-full bg-[#FF6B6B] animate-pulse" />
-              <span className="text-neutral-400">On air:</span>
-              <b className="text-white font-semibold truncate max-w-[140px]">
-                {currentSong.title}
-              </b>
-            </div>
-
-            <button
-              onClick={() => setIsRealSongSearchOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1DB954]/20 border border-[#1DB954]/40 text-[#1DB954] hover:text-white text-xs font-display uppercase font-bold hover:border-[#1DB954] transition-all shadow-sm"
-              title="Search and import any real song worldwide"
-            >
-              <Search className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Search Songs</span>
-            </button>
-
-            <button
-              onClick={() => setIsArchitectureModalOpen(true)}
-              className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#12141A] border border-[#232733] hover:border-cyan-500/40 text-neutral-300 hover:text-cyan-300 text-xs font-mono transition-all"
-            >
-              <Database className="w-3.5 h-3.5 text-cyan-400" />
-              <span>pgvector</span>
-            </button>
-          </div>
+      {/* Aura-inspired sidebar navigation */}
+      <header className="aura-sidebar-shell fixed left-0 top-0 z-40 flex h-screen w-[88px] flex-col items-center border-r border-white/10 px-3 py-5">
+        <div
+          className="aura-brand-mark group mb-10 flex size-12 cursor-pointer items-center justify-center rounded-2xl"
+          onClick={() => setShowLandingPage(true)}
+          title="Return to Splash / Landing Page"
+        >
+          <Activity className="size-5 text-violet-200 transition-transform duration-500 group-hover:rotate-12 group-hover:scale-110" />
         </div>
-      </header>
+        <nav className="flex flex-1 flex-col items-center gap-3" aria-label="Primary navigation">
+          <button aria-label="Discover" title="Discover" onClick={() => setActiveTab('recommender')} className={`aura-nav-item ${activeTab === 'recommender' ? 'is-active' : ''}`}><Sparkles /></button>
+          <button aria-label="Taste Profile" title="Taste Profile" onClick={() => setActiveTab('dashboard')} className={`aura-nav-item ${activeTab === 'dashboard' ? 'is-active' : ''}`}><BarChart3 /></button>
+          <button aria-label="Catalog" title={`Catalog contains ${catalog.length} curated tracks`} onClick={() => setActiveTab('library')} className={`aura-nav-item ${activeTab === 'library' ? 'is-active' : ''}`}><Music /></button>
+          <button aria-label="Playlists" title="Playlists" onClick={() => setActiveTab('playlists')} className={`aura-nav-item ${activeTab === 'playlists' ? 'is-active' : ''}`}><ListMusic /></button>
+          <button aria-label="Search songs" title="Search songs" onClick={() => setIsRealSongSearchOpen(true)} className="aura-nav-item"><Search /></button>
+          <button aria-label="Database tables" title="Database tables" onClick={() => setIsArchitectureModalOpen(true)} className="aura-nav-item"><Database /></button>
+        </nav>
+        <UserHeaderMenu
+          user={displayUser}
+          tasteProfile={userTasteProfile}
+          onOpenTasteProfileModal={() => setIsTasteProfileModalOpen(true)}
+          onOpenUserDetailsModal={() => setIsUserDetailsModalOpen(true)}
+          onOpenSettingsModal={() => setIsSettingsModalOpen(true)}
+          onOpenNewUserPrompt={() => setIsCreateUserPromptOpen(true)}
+          onGoToLandingPage={() => setShowLandingPage(true)}
+        />
+      </header> 
 
-      {/* Main Container */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-4 flex-1 w-full space-y-8">
+      {/* Main Content Area */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 flex-1 w-full space-y-8">
         {/* VIEW 1: Recommender & Vector Explorer */}
         {activeTab === 'recommender' && (
           <div className="space-y-8">
-            {/* Cyberpunk NULLWAVE Hero with Audio Player & Live Waveform */}
-            <NullwaveHero
-              currentSong={currentSong}
-              isPlaying={isPlaying}
-              onTogglePlay={() => {
-                if (isPlaying) {
-                  audioSynthesizer.stopPlayback();
-                  setIsPlaying(false);
-                } else {
-                  audioSynthesizer.playSong(currentSong);
-                  setIsPlaying(true);
-                  recordListeningSession(currentSong);
-                }
-              }}
-              onExploreStations={() => setActiveTab('stations')}
-              onSearchRealSongs={() => setIsRealSongSearchOpen(true)}
-            />
-
-            {/* Collapsible Acoustic Vector Tuner with "SET" Refresh Button */}
-            <VectorTuner
-              targetVector={targetVector}
-              onApplyVector={handleApplyVector}
-              selectedGenre={selectedGenre}
-              blendHistoryRatio={blendHistoryRatio}
-              userHistoryVector={userTasteProfile.tasteVector}
-            />
-
-            {/* Recommendations Grid Section */}
-            <div className="space-y-4 pt-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#232733] pb-3">
-                <div>
-                  <h2 className="text-xl sm:text-2xl font-display font-bold uppercase tracking-tight text-white flex items-center gap-2">
-                    <Sparkles className="w-5 h-5 text-[#FF6B6B]" />
-                    <span>Top Real Song Recommendations</span>
-                  </h2>
-                  <p className="text-xs font-mono text-neutral-400 mt-1">
-                    Live cosine similarity matching across Kaggle Spotify dataset via pgvector KNN
+            {/* Hero Intro */}
+            <div className="relative pt-4 pb-2">
+              <div className="flex flex-col md:flex-row items-start md:items-end justify-between gap-6">
+                <div className="max-w-2xl space-y-3">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium bg-white/5 border border-white/10 text-violet-300">
+                    <Sparkles className="w-3.5 h-3.5 text-violet-400" />
+                    <span>Acoustic pgvector · Real Studio Previews</span>
+                  </div>
+                  <h1 className="font-display text-4xl sm:text-6xl lg:text-7xl font-semibold tracking-tight text-[#f2ece4] leading-[0.95]">
+                    Find the feeling.
+                  </h1>
+                  <p className="text-sm sm:text-base text-white/70 max-w-xl">
+                    High-dimensional music discovery that learns your mood, energy, and acoustic taste
+                    in milliseconds. Powered by 8D vector embeddings and PostgreSQL pgvector.
                   </p>
                 </div>
 
-                <div className="flex items-center gap-3 text-xs font-mono text-neutral-400">
-                  <span className="px-2.5 py-1 rounded-lg bg-[#12141A] border border-[#232733]">
-                    {recommendations.length} Results
-                  </span>
+                {/* Right: Signature Cosmic Button */}
+                <div className="flex items-center gap-3">
                   <button
-                    onClick={() => setIsArchitectureModalOpen(true)}
-                    className="text-cyan-400 hover:text-cyan-300 underline underline-offset-4 text-xs font-mono"
+                    type="button"
+                    onClick={() => setIsRealSongSearchOpen(true)}
+                    className="cosmic-button px-6 py-3 min-h-[48px] text-sm text-white font-medium"
                   >
-                    SQL Query ({queryPlan.executionTimeMs}ms)
+                    <div className="points_wrapper">
+                      <i className="point"></i>
+                      <i className="point"></i>
+                      <i className="point"></i>
+                      <i className="point"></i>
+                    </div>
+                    <span className="relative z-10 flex items-center gap-2">
+                      <span>Search Any Song</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </span>
                   </button>
                 </div>
               </div>
 
-              {/* Cards Grid */}
+              {/* 3 Metrics Cards Row */}
+              <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="rounded-2xl p-5 backdrop-blur-xl bg-[#0b0b10]/70 supports-[backdrop-filter]:bg-[#0b0b10]/50 border border-white/10 ring-1 ring-white/5 shadow-lg">
+                  <div className="text-2xl sm:text-3xl font-semibold tracking-tight text-white mb-1">
+                    1.2M+
+                  </div>
+                  <div className="text-xs font-medium text-white/90">Kaggle Spotify Dataset</div>
+                  <div className="text-[11px] text-white/50 mt-1">
+                    {catalog.length} curated tracks in active memory cache
+                  </div>
+                </div>
+
+                <div className="rounded-2xl p-5 backdrop-blur-xl bg-[#0b0b10]/70 supports-[backdrop-filter]:bg-[#0b0b10]/50 border border-white/10 ring-1 ring-white/5 shadow-lg">
+                  <div className="text-2xl sm:text-3xl font-semibold tracking-tight text-white mb-1">
+                    8-Dim
+                  </div>
+                  <div className="text-xs font-medium text-white/90">pgvector Space</div>
+                  <div className="text-[11px] text-white/50 mt-1">
+                    Dance, Energy, Valence, BPM, Vibe, Acoustic harmonics
+                  </div>
+                </div>
+
+                <div className="rounded-2xl p-5 backdrop-blur-xl bg-[#0b0b10]/70 supports-[backdrop-filter]:bg-[#0b0b10]/50 border border-white/10 ring-1 ring-white/5 shadow-lg">
+                  <div className="text-2xl sm:text-3xl font-semibold tracking-tight text-white mb-1">
+                    &lt; 4ms
+                  </div>
+                  <div className="text-xs font-medium text-white/90">Cosine KNN Query</div>
+                  <div className="text-[11px] text-white/50 mt-1">
+                    Time-weighted history centroid blending
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Collapsible Vector Tuner (Connected directly to relational DB) */}
+            <VectorTuner
+              targetVector={targetVector}
+              onChangeVector={handleVectorChange}
+              selectedGenre={selectedGenre}
+              onSelectGenre={setSelectedGenre}
+              blendHistoryRatio={blendHistoryRatio}
+              onChangeBlendRatio={setBlendHistoryRatio}
+              userHistoryVector={userTasteProfile.tasteVector}
+              isDbSynced={Boolean(activeUser)}
+              activeUsername={activeUser?.username}
+            />
+
+            {/* Recommendations Grid Section */}
+            <div className="space-y-4 pt-2">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-3">
+                <div>
+                  <h2 className="text-xl sm:text-2xl font-semibold text-white flex items-center gap-2 tracking-tight">
+                    <Sparkles className="w-5 h-5 text-violet-400" />
+                    <span>Acoustic Recommendations</span>
+                  </h2>
+                  <p className="text-xs text-white/60 mt-0.5">
+                    Live cosine similarity matching across Spotify dataset via pgvector KNN
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3 text-xs text-white/60 font-mono">
+                  <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10">
+                    {recommendations.length} Tracks
+                  </span>
+                  <button
+                    onClick={() => setIsArchitectureModalOpen(true)}
+                    className="text-violet-400 hover:text-violet-300 underline underline-offset-4 text-xs font-sans"
+                  >
+                    SQL Query Plan ({queryPlan.executionTimeMs}ms)
+                  </button>
+                </div>
+              </div>
+
+              {/* Cards Grid in frosted glass */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {recommendations.map((rec) => (
                   <SongCard
@@ -432,80 +561,18 @@ export default function App() {
                     onLikeToggle={handleToggleLike}
                     onInspectVector={(s) => setInspectingSong(s)}
                     onOpenSpotify={(s) => setSpotifyEmbedSong(s)}
+                    onAddToPlaylist={(s) => {
+                      setSongToAddToPlaylist(s);
+                      setIsAddToPlaylistOpen(true);
+                    }}
                   />
                 ))}
               </div>
             </div>
-
-            {/* Bottom Quick Stations Teaser */}
-            <div className="pt-8 border-t border-[#232733] flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <b className="font-display uppercase text-sm text-white block">
-                  Looking for curated radio channels?
-                </b>
-                <span className="font-mono text-xs text-neutral-400">
-                  Switch to the Stations &amp; Schedule view to tune Focus, Night Drive, Deep Read, and Tape Room.
-                </span>
-              </div>
-              <button
-                onClick={() => setActiveTab('stations')}
-                className="px-4 py-2 rounded-xl bg-[#12141A] hover:bg-[#181B22] border border-[#232733] hover:border-[#FF6B6B] text-white font-display text-xs uppercase tracking-wider font-bold transition-all flex items-center gap-2"
-              >
-                <Radio className="w-3.5 h-3.5 text-[#FF6B6B]" />
-                <span>Open Radio Stations &rarr;</span>
-              </button>
-            </div>
           </div>
         )}
 
-        {/* VIEW 2: Stations & Schedule + Signal Chain + Audio Bed Mixer */}
-        {activeTab === 'stations' && (
-          <div className="space-y-12">
-            {/* Header banner */}
-            <div className="p-6 rounded-3xl bg-[#12141A] border border-[#232733] flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-              <div>
-                <span className="font-mono text-xs uppercase tracking-widest text-[#FF6B6B]">
-                  Live Net Radio Station
-                </span>
-                <h1 className="font-display text-2xl sm:text-3xl font-bold uppercase tracking-tight text-white mt-1">
-                  Stations, Schedule &amp; Signal Chain
-                </h1>
-                <p className="font-mono text-xs text-neutral-400 mt-1 max-w-xl">
-                  Rain, drones, slow arpeggios and machine hum. Pick any station or timetable slot
-                  to snap the acoustic vector and stream high-fidelity audio.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    handlePlayToggle(currentSong);
-                  }}
-                  className="px-4 py-2.5 rounded-xl bg-white hover:bg-[#FF6B6B] text-black font-display font-bold text-xs uppercase tracking-wider transition-colors flex items-center gap-2 shadow-lg"
-                >
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>{isPlaying ? 'Streaming Live' : 'Start Stream'}</span>
-                </button>
-              </div>
-            </div>
-
-            {/* 1. Four Stations & Today on Air */}
-            <ScheduleStationsSection
-              currentSong={currentSong}
-              isPlaying={isPlaying}
-              onSelectStation={handleSelectStation}
-              catalog={catalog}
-            />
-
-            {/* 2. Signal Transmission Route & Technical Studio Signal Chain */}
-            <SignalChainSection />
-
-            {/* 3. Audio Bed 3-Layer Waveform Mixer */}
-            <AudioBedMixerSection />
-          </div>
-        )}
-
-        {/* VIEW 3: Personalized Taste Dashboard */}
+        {/* VIEW 2: Personalized Taste Dashboard */}
         {activeTab === 'dashboard' && (
           <DashboardView
             tasteProfile={userTasteProfile}
@@ -520,46 +587,92 @@ export default function App() {
           />
         )}
 
-        {/* VIEW 4: Full Song & Vector Catalog Library */}
+        {/* VIEW 3: Full Song & Vector Catalog Library */}
         {activeTab === 'library' && (
           <div className="space-y-6">
-            {/* Header banner */}
-            <div className="p-6 rounded-3xl bg-[#12141A] border border-[#232733] flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="p-6 rounded-2xl backdrop-blur-xl bg-[#0b0b10]/70 supports-[backdrop-filter]:bg-[#0b0b10]/50 border border-white/10 ring-1 ring-white/5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
               <div>
-                <div className="flex items-center gap-2">
-                  <h1 className="text-2xl font-display font-bold uppercase tracking-tight text-white">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="text-xl font-semibold text-white tracking-tight">
                     Spotify &amp; pgvector Catalog
                   </h1>
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-mono bg-amber-500/15 text-amber-300 border border-amber-500/25">
+                    {catalog.length} In-Memory Tracks
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
                     Kaggle 1.2M+ Real Songs
                   </span>
                 </div>
-                <p className="font-mono text-xs text-neutral-400 mt-1 max-w-xl">
+                <p className="text-xs text-white/60 mt-1 max-w-xl">
                   Curated tracks spanning Daft Punk, The Weeknd, Arctic Monkeys, Kavinsky, SZA, and more.
                   Each track contains real studio audio preview streaming and 8D acoustic embeddings.
                 </p>
               </div>
 
-              <button
-                onClick={() => setIsRealSongSearchOpen(true)}
-                className="px-4 py-2.5 rounded-2xl bg-[#1DB954] hover:bg-[#1ed760] text-black font-display font-bold text-xs uppercase tracking-wider transition-all flex items-center gap-2 shadow-lg shadow-[#1DB954]/20 shrink-0"
-              >
-                <Search className="w-4 h-4" />
-                <span>Search &amp; Import Any Track</span>
-              </button>
+              <div className="flex items-center gap-2.5 shrink-0">
+                <button
+                  onClick={() => handleExpandCatalog(8)}
+                  className="px-3.5 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-medium text-xs transition-all flex items-center gap-1.5 shadow-md shadow-violet-600/20"
+                  title="Generate 8 fresh diverse tracks and insert into tracks and audio_features tables"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>Grow Catalog (+8)</span>
+                </button>
+
+                <button
+                  onClick={() => setIsRealSongSearchOpen(true)}
+                  className="px-4 py-2.5 rounded-xl bg-white text-black font-semibold text-xs transition-all flex items-center gap-2 hover:bg-white/90 shadow-lg shadow-white/10"
+                >
+                  <Search className="w-4 h-4" />
+                  <span>Search &amp; Import Any Track</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Clear user-facing explanation of the count and local memory cache purpose */}
+            <div className="p-4 sm:p-5 rounded-2xl backdrop-blur-xl bg-amber-500/[0.04] border border-amber-500/20 ring-1 ring-amber-500/10 flex flex-col sm:flex-row items-start gap-3.5 text-xs">
+              <div className="p-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 shrink-0 mt-0.5">
+                <Info className="w-4 h-4" />
+              </div>
+              <div className="space-y-1.5 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-semibold text-white text-sm">
+                    Why does the Catalog indicate ({catalog.length})?
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-mono uppercase tracking-wider bg-amber-400/15 text-amber-300 border border-amber-400/30 font-medium">
+                    Local Memory Cache &amp; Relational Engine
+                  </span>
+                </div>
+                <p className="text-white/80 leading-relaxed">
+                  The <strong className="text-amber-300 font-semibold">{catalog.length}</strong> count represents the active in-memory cached subset of tracks loaded into the PostgreSQL <code className="text-violet-300 font-mono">tracks</code> and <code className="text-violet-300 font-mono">audio_features</code> tables.
+                </p>
+                <p className="text-white/55 leading-relaxed text-[11px]">
+                  Keeping this curated subset directly in active memory guarantees sub-millisecond 8D vector cosine distance queries and instant browser audio synthesis. You can expand variety at any time using <span className="text-white/85 font-medium">"Grow Catalog (+8)"</span> or import real music worldwide via <span className="text-white/85 font-medium">"Search &amp; Import Any Track"</span>. Every new song executes real <code className="text-emerald-300 font-mono">INSERT INTO</code> relational queries!
+                </p>
+              </div>
             </div>
 
             {/* Filter and Search Bar */}
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
-                {['All', 'Synthwave', 'Nu-Disco / Pop', 'Lo-Fi Chill', 'Cyber Techno', 'Indie Folk', 'Neo-Soul / R&B', 'Alt Rock', 'Cinematic Ambient'].map((g) => (
+                {[
+                  'All',
+                  'Synthwave',
+                  'Nu-Disco / Pop',
+                  'Lo-Fi Chill',
+                  'Cyber Techno',
+                  'Indie Folk',
+                  'Neo-Soul / R&B',
+                  'Alt Rock',
+                  'Cinematic Ambient',
+                ].map((g) => (
                   <button
                     key={g}
                     onClick={() => setSelectedGenre(g)}
-                    className={`px-3 py-1.5 rounded-xl font-mono whitespace-nowrap transition-colors border ${
+                    className={`px-3 py-1.5 rounded-xl whitespace-nowrap transition-colors border ${
                       selectedGenre === g
-                        ? 'bg-[#FF6B6B] text-black font-bold border-[#FF6B6B]'
-                        : 'bg-[#12141A] text-neutral-400 border-[#232733] hover:text-white'
+                        ? 'bg-white text-black font-semibold border-white'
+                        : 'bg-white/[0.03] text-white/60 border-white/10 hover:text-white hover:bg-white/[0.06]'
                     }`}
                   >
                     {g}
@@ -567,16 +680,20 @@ export default function App() {
                 ))}
               </div>
 
-              {/* Search input */}
-              <div className="relative w-full sm:w-72">
-                <Search className="w-4 h-4 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  placeholder="Search catalog by title, artist..."
-                  value={librarySearch}
-                  onChange={(e) => setLibrarySearch(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2 rounded-xl bg-[#12141A] border border-[#232733] text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-[#FF6B6B]/60 font-mono"
-                />
+              <div className="flex items-center gap-3 w-full sm:w-auto">
+                <span className="text-[11px] font-mono text-white/40 whitespace-nowrap hidden md:inline">
+                  {filteredCatalog.length} of {catalog.length} cached tracks
+                </span>
+                <div className="relative w-full sm:w-72">
+                  <Search className="w-4 h-4 text-white/40 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="Search catalog by title, artist..."
+                    value={librarySearch}
+                    onChange={(e) => setLibrarySearch(e.target.value)}
+                    className="w-full pl-9 pr-4 py-2 rounded-xl bg-white/[0.03] border border-white/10 text-xs text-white placeholder-white/40 focus:outline-none focus:border-violet-500/80"
+                  />
+                </div>
               </div>
             </div>
 
@@ -593,14 +710,33 @@ export default function App() {
                   onLikeToggle={handleToggleLike}
                   onInspectVector={(s) => setInspectingSong(s)}
                   onOpenSpotify={(s) => setSpotifyEmbedSong(s)}
+                  onAddToPlaylist={(s) => {
+                    setSongToAddToPlaylist(s);
+                    setIsAddToPlaylistOpen(true);
+                  }}
                 />
               ))}
             </div>
           </div>
         )}
+
+        {/* VIEW 4: Relational Playlists & Collections */}
+        {activeTab === 'playlists' && (
+          <PlaylistsView
+            currentUser={displayUser}
+            currentSong={currentSong}
+            isPlaying={isPlaying}
+            onPlaySong={handlePlayToggle}
+            onToggleLike={handleToggleLike}
+            likedSongIds={likedSongIds}
+            allSongs={catalog}
+            onInspectVector={(s) => setInspectingSong(s)}
+            onOpenArchitecture={() => setIsArchitectureModalOpen(true)}
+          />
+        )}
       </main>
 
-      {/* 3. Persistent Bottom Audio Player Bar with Real Studio Stream & Live Equalizer */}
+      {/* Persistent Bottom Audio Player Bar */}
       <AudioPlayerBar
         currentSong={currentSong}
         isPlaying={isPlaying}
@@ -622,7 +758,7 @@ export default function App() {
         onOpenSpotify={(s) => setSpotifyEmbedSong(s)}
       />
 
-      {/* 4. PostgreSQL + pgvector Architecture Center Drawer */}
+      {/* PostgreSQL + pgvector Architecture Center Drawer */}
       <PgVectorArchitectureDrawer
         isOpen={isArchitectureModalOpen}
         onClose={() => setIsArchitectureModalOpen(false)}
@@ -632,7 +768,7 @@ export default function App() {
         onChangeMetric={setVectorMetric}
       />
 
-      {/* 5. Single Song Vector Inspector Modal */}
+      {/* Single Song Vector Inspector Modal */}
       <VectorInspectorModal
         song={inspectingSong}
         comparisonVector={effectiveQueryVector}
@@ -641,13 +777,10 @@ export default function App() {
         onOpenSpotify={(s) => setSpotifyEmbedSong(s)}
       />
 
-      {/* 6. Spotify Player Embed Modal */}
-      <SpotifyEmbedModal
-        song={spotifyEmbedSong}
-        onClose={() => setSpotifyEmbedSong(null)}
-      />
+      {/* Spotify Player Embed Modal */}
+      <SpotifyEmbedModal song={spotifyEmbedSong} onClose={() => setSpotifyEmbedSong(null)} />
 
-      {/* 7. Real Song Live Search & Import Modal */}
+      {/* Real Song Live Search & Import Modal */}
       <RealSongSearchModal
         isOpen={isRealSongSearchOpen}
         onClose={() => setIsRealSongSearchOpen(false)}
@@ -655,6 +788,124 @@ export default function App() {
         onPlaySong={handlePlayToggle}
         currentPlayingSong={currentSong}
         isPlaying={isPlaying}
+      />
+
+      {/* Dedicated Taste Profile Modal Dialog */}
+      <TasteProfileModal
+        isOpen={isTasteProfileModalOpen}
+        onClose={() => setIsTasteProfileModalOpen(false)}
+        user={activeUser}
+        tasteProfile={userTasteProfile}
+        onUpdateTasteVector={handleVectorChange}
+        onResetTasteVector={handleResetTasteVector}
+      />
+
+      {/* Dedicated User Details Modal Dialog */}
+      <UserDetailsModal
+        isOpen={isUserDetailsModalOpen}
+        onClose={() => setIsUserDetailsModalOpen(false)}
+        user={activeUser}
+        onUserUpdated={(updated) => setActiveUser(updated)}
+        historyCount={history.length}
+      />
+
+      {/* Dedicated Settings Modal Dialog */}
+      <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+        vectorMetric={vectorMetric}
+        onChangeMetric={setVectorMetric}
+        currentUser={activeUser}
+        onSwitchUser={handleSwitchUser}
+        onOpenNewUserPrompt={() => setIsCreateUserPromptOpen(true)}
+        onGoToLandingPage={() => setShowLandingPage(true)}
+      />
+
+      {/* In-App Create User Prompt Modal */}
+      {isCreateUserPromptOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div
+            className="w-full max-w-md bg-[#0d0d14] border border-white/10 rounded-2xl shadow-2xl p-6 text-zinc-100 ring-1 ring-white/5 relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-violet-600/30 border border-violet-500/30 flex items-center justify-center text-violet-300">
+                  <User className="w-4 h-4" />
+                </div>
+                <h3 className="text-sm font-semibold text-white">Create New User Profile</h3>
+              </div>
+              <button
+                onClick={() => setIsCreateUserPromptOpen(false)}
+                className="text-white/40 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!newUserName.trim()) return;
+                handleCreateAndLaunchUser(newUserName.trim(), newUserEmail.trim() || undefined);
+                setNewUserName('');
+                setNewUserEmail('');
+                setIsCreateUserPromptOpen(false);
+              }}
+              className="space-y-4"
+            >
+              <div className="space-y-1">
+                <label className="text-xs text-white/70">Username *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Luna"
+                  value={newUserName}
+                  onChange={(e) => setNewUserName(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white placeholder-white/40 focus:outline-none focus:border-violet-500/80"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-white/70">Email (Optional)</label>
+                <input
+                  type="email"
+                  placeholder="e.g. luna@example.com"
+                  value={newUserEmail}
+                  onChange={(e) => setNewUserEmail(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white placeholder-white/40 focus:outline-none focus:border-violet-500/80"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsCreateUserPromptOpen(false)}
+                  className="px-3.5 py-2 text-xs text-white/60 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-xl text-xs font-semibold"
+                >
+                  Create &amp; Switch
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Dedicated Add to Playlist Modal */}
+      <AddToPlaylistModal
+        isOpen={isAddToPlaylistOpen}
+        onClose={() => {
+          setIsAddToPlaylistOpen(false);
+          setSongToAddToPlaylist(null);
+        }}
+        song={songToAddToPlaylist}
+        currentUser={displayUser}
       />
     </div>
   );
