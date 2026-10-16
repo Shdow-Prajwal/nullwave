@@ -183,15 +183,6 @@ export const VectorTuner: React.FC<VectorTunerProps> = ({
               <h2 className="text-sm sm:text-base font-semibold text-white tracking-tight truncate">
                 Acoustic Vector Tuner
               </h2>
-              <span className="hidden sm:inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium bg-violet-500/10 text-violet-300 border border-violet-500/20">
-                8D Embeddings
-              </span>
-              {isDbSynced && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>DB Connected{activeUsername ? `: @${activeUsername}` : ''}</span>
-                </span>
-              )}
             </div>
             <p className="text-xs text-white/60 truncate">
               {isExpanded

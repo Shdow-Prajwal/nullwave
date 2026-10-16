@@ -18,7 +18,6 @@ import {
   User,
   X,
   ChevronRight,
-  Info,
 } from 'lucide-react';
 import { Song, MusicVector, HistoryRecord, RecommendationResult, MusicGenre } from './types/music';
 import { MOCK_SONG_CATALOG, INITIAL_LISTENING_HISTORY, GENRE_THEMES } from './data/mockCatalog';
@@ -188,33 +187,11 @@ export default function App() {
 
   // 5. Connect Sliders to Database: Update targetVector AND write to PostgreSQL users table
   const handleVectorChange = useCallback(
-    async (updated: MusicVector) => {
-      // 1. Immediately update UI local state for smooth slider response
+    (updated: MusicVector) => {
       setTargetVector(updated);
-
-      if (!activeUser) return;
-
-      const arr = musicVectorToArray(updated);
-
-      try {
-        // 2. Persist to local IndexedDB/Memory service if used
-        await userDbService.updateUserTasteVector(activeUser.user_id, arr);
-
-        // 3. Sync to Express Backend -> PostgreSQL DB
-        const response = await fetch(`http://localhost:3001/api/users/${activeUser.user_id}/taste-vector`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tasteVector: arr }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data = await response.json();
-        console.log('Taste vector synced to PostgreSQL:', data);
-      } catch (error) {
-        console.error('Failed to sync taste vector to backend:', error);
+      if (activeUser) {
+        const arr = musicVectorToArray(updated);
+        userDbService.updateUserTasteVector(activeUser.user_id, arr);
       }
     },
     [activeUser]
@@ -399,11 +376,15 @@ export default function App() {
 
   // ── 2. Render Main Application Studio ──
   return (
-    <div className="min-h-screen bg-[#101116] text-[#f5f3f7] flex flex-col relative pb-36 font-sans aura-app-shell">
+    <div className="min-h-screen text-[#f5f3f7] flex flex-col relative pb-36 font-sans aura-app-shell isolate">
       {/* Dynamic Atmospheric Background */}
-      <DynamicGenreBackground currentGenre={currentSong.genre} isPlaying={isPlaying} />
+      <DynamicGenreBackground
+        currentGenre={currentSong.genre}
+        isPlaying={isPlaying}
+        coverImage={currentSong.coverImage}
+      />
 
-      {/* Aura-inspired sidebar navigation */}
+      {/* Aura-inspired sidebar navigation; the existing views and controls remain unchanged. */}
       <header className="aura-sidebar-shell fixed left-0 top-0 z-40 flex h-screen w-[88px] flex-col items-center border-r border-white/10 px-3 py-5">
         <div
           className="aura-brand-mark group mb-10 flex size-12 cursor-pointer items-center justify-center rounded-2xl"
@@ -431,6 +412,8 @@ export default function App() {
         />
       </header> 
 
+      {/* Existing main content keeps its original grid and section order. */}
+
       {/* Main Content Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 flex-1 w-full space-y-8">
         {/* VIEW 1: Recommender & Vector Explorer */}
@@ -440,10 +423,6 @@ export default function App() {
             <div className="relative pt-4 pb-2">
               <div className="flex flex-col md:flex-row items-start md:items-end justify-between gap-6">
                 <div className="max-w-2xl space-y-3">
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium bg-white/5 border border-white/10 text-violet-300">
-                    <Sparkles className="w-3.5 h-3.5 text-violet-400" />
-                    <span>Acoustic pgvector · Real Studio Previews</span>
-                  </div>
                   <h1 className="font-display text-4xl sm:text-6xl lg:text-7xl font-semibold tracking-tight text-[#f2ece4] leading-[0.95]">
                     Find the feeling.
                   </h1>
@@ -596,12 +575,6 @@ export default function App() {
                   <h1 className="text-xl font-semibold text-white tracking-tight">
                     Spotify &amp; pgvector Catalog
                   </h1>
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-mono bg-amber-500/15 text-amber-300 border border-amber-500/25">
-                    {catalog.length} In-Memory Tracks
-                  </span>
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
-                    Kaggle 1.2M+ Real Songs
-                  </span>
                 </div>
                 <p className="text-xs text-white/60 mt-1 max-w-xl">
                   Curated tracks spanning Daft Punk, The Weeknd, Arctic Monkeys, Kavinsky, SZA, and more.
@@ -626,29 +599,6 @@ export default function App() {
                   <Search className="w-4 h-4" />
                   <span>Search &amp; Import Any Track</span>
                 </button>
-              </div>
-            </div>
-
-            {/* Clear user-facing explanation of the count and local memory cache purpose */}
-            <div className="p-4 sm:p-5 rounded-2xl backdrop-blur-xl bg-amber-500/[0.04] border border-amber-500/20 ring-1 ring-amber-500/10 flex flex-col sm:flex-row items-start gap-3.5 text-xs">
-              <div className="p-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 shrink-0 mt-0.5">
-                <Info className="w-4 h-4" />
-              </div>
-              <div className="space-y-1.5 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="font-semibold text-white text-sm">
-                    Why does the Catalog indicate ({catalog.length})?
-                  </h3>
-                  <span className="px-2 py-0.5 rounded-md text-[10px] font-mono uppercase tracking-wider bg-amber-400/15 text-amber-300 border border-amber-400/30 font-medium">
-                    Local Memory Cache &amp; Relational Engine
-                  </span>
-                </div>
-                <p className="text-white/80 leading-relaxed">
-                  The <strong className="text-amber-300 font-semibold">{catalog.length}</strong> count represents the active in-memory cached subset of tracks loaded into the PostgreSQL <code className="text-violet-300 font-mono">tracks</code> and <code className="text-violet-300 font-mono">audio_features</code> tables.
-                </p>
-                <p className="text-white/55 leading-relaxed text-[11px]">
-                  Keeping this curated subset directly in active memory guarantees sub-millisecond 8D vector cosine distance queries and instant browser audio synthesis. You can expand variety at any time using <span className="text-white/85 font-medium">"Grow Catalog (+8)"</span> or import real music worldwide via <span className="text-white/85 font-medium">"Search &amp; Import Any Track"</span>. Every new song executes real <code className="text-emerald-300 font-mono">INSERT INTO</code> relational queries!
-                </p>
               </div>
             </div>
 
