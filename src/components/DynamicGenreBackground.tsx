@@ -20,15 +20,15 @@ export const DynamicGenreBackground: React.FC<DynamicGenreBackgroundProps> = ({
       id="dynamic-genre-ambient-canvas"
       className="fixed inset-0 pointer-events-none -z-10 overflow-hidden transition-all duration-1000 ease-out"
     >
-      {/* Base deep obsidian background */}
-      <div className="absolute inset-0 bg-[#0b0b10]" />
+      {/* Base Ember Clay background */}
+      <div className="absolute inset-0 bg-[#140D0F]" />
 
-      {/* Cosmic radial glow from template */}
+      {/* Warm atmospheric glow */}
       <div
         className="absolute -top-24 left-1/2 -translate-x-1/2 w-full max-w-5xl h-96 rounded-full opacity-60 blur-3xl pointer-events-none"
         style={{
           background:
-            'radial-gradient(60% 60%, rgba(139, 92, 246, 0.22) 0%, rgba(99, 102, 241, 0.16) 40%, rgba(0, 0, 0, 0) 75%)',
+            'radial-gradient(60% 60%, rgba(255, 127, 77, 0.28) 0%, rgba(232, 140, 152, 0.18) 40%, rgba(20, 13, 15, 0) 75%)',
         }}
       />
 

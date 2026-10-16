@@ -59,9 +59,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-[#07070b] text-zinc-100 flex flex-col justify-between relative overflow-hidden font-sans selection:bg-violet-500/30 selection:text-violet-200">
+    <div className="min-h-screen bg-[#140D0F] text-[#F6EBDD] flex flex-col justify-between relative overflow-hidden font-sans selection:bg-[#FF7F4D]/30 selection:text-[#F6EBDD]">
       {/* Ambient background glows */}
-      <div className="absolute top-[-10%] left-1/2 -translate-x-1/2 w-[700px] sm:w-[1000px] h-[550px] bg-gradient-to-b from-violet-600/20 via-indigo-600/10 to-transparent blur-[140px] pointer-events-none rounded-full" />
+      <div className="absolute top-[-10%] left-1/2 -translate-x-1/2 w-[700px] sm:w-[1000px] h-[550px] bg-gradient-to-b from-[#FF7F4D]/25 via-[#E88C98]/12 to-transparent blur-[140px] pointer-events-none rounded-full" />
       <div className="absolute bottom-[-10%] right-[-5%] w-[450px] h-[450px] bg-emerald-600/10 blur-[130px] pointer-events-none rounded-full" />
       <div className="absolute top-[40%] left-[-10%] w-[400px] h-[400px] bg-fuchsia-600/10 blur-[140px] pointer-events-none rounded-full" />
 
@@ -208,7 +208,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
         {/* Feature Grid */}
         <div className="mt-16 grid grid-cols-1 sm:grid-cols-3 gap-4 w-full text-left">
-          <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/10 ring-1 ring-white/5 backdrop-blur-xl">
+          <div className="p-5 rounded-2xl glass">
             <div className="w-8 h-8 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-violet-300 mb-3">
               <Sliders className="w-4 h-4" />
             </div>
@@ -218,7 +218,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </p>
           </div>
 
-          <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/10 ring-1 ring-white/5 backdrop-blur-xl">
+          <div className="p-5 rounded-2xl glass">
             <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-300 mb-3">
               <Database className="w-4 h-4" />
             </div>
@@ -228,7 +228,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </p>
           </div>
 
-          <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/10 ring-1 ring-white/5 backdrop-blur-xl">
+          <div className="p-5 rounded-2xl glass">
             <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-300 mb-3">
               <Music className="w-4 h-4" />
             </div>
