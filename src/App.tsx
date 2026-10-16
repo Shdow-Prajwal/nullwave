@@ -309,8 +309,7 @@ export default function App() {
           body: JSON.stringify({
             userId: uid,
             trackId: song.id,
-            completionPercent: completion,
-            userLiked: isLiked,
+            rating: isLiked ? 5 : (completion >= 80 ? 4 : 3),
           }),
         });
       } catch (err) {

@@ -1,4 +1,4 @@
-// server.js - Express bridge for PostgreSQL + pgvector
+// server.js - Precise PostgreSQL + pgvector bridge matching exact schema
 import express from 'express';
 import cors from 'cors';
 import pg from 'pg';
@@ -41,7 +41,7 @@ app.get('/api/health', async (req, res) => {
       "SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';"
     );
     const tablesCheck = await pool.query(
-      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';"
+      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name;"
     );
     res.json({
       status: 'connected',
@@ -52,6 +52,7 @@ app.get('/api/health', async (req, res) => {
       tables: tablesCheck.rows.map((r) => r.table_name),
     });
   } catch (err) {
+    console.error('[DB Health Check Error]:', err.message);
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
@@ -65,14 +66,19 @@ app.get('/api/users', async (req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
+    console.error('[DB Error in get users]:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Create new user
+// Create new user (exact columns: username, email, created_at, taste_vector)
 app.post('/api/users', async (req, res) => {
-  const { username, email = '', tasteVector = [0.75, 0.65, 0.6, 0.5, 0.6, 0.25, 0.5, 0.45] } = req.body;
-  
+  const {
+    username,
+    email = `${(req.body.username || 'user').toLowerCase()}@vectorvibe.local`,
+    tasteVector = [0.75, 0.65, 0.6, 0.5, 0.6, 0.25, 0.5, 0.45],
+  } = req.body;
+
   if (!username) {
     return res.status(400).json({ error: 'Username is required' });
   }
@@ -80,22 +86,25 @@ app.post('/api/users', async (req, res) => {
   try {
     const vectorStr = toPgVector(tasteVector);
     const result = await pool.query(
-      `INSERT INTO users (username, email, taste_vector)
-       VALUES ($1, $2, $3::vector)
+      `INSERT INTO users (username, email, created_at, taste_vector)
+       VALUES ($1, $2, NOW(), $3::vector)
        RETURNING user_id, username, email, taste_vector::text, created_at;`,
       [username, email, vectorStr]
     );
 
-    // Auto-create default system "Favorites" playlist for this new user
+    const newUser = result.rows[0];
+
+    // Auto-create default "Favorites" playlist for this user (exact columns: title, user_id, created_at)
     await pool.query(
-      `INSERT INTO playlists (title, user_id, is_system, created_at)
-       VALUES ('Favorites', $1, true, NOW())
-       ON CONFLICT DO NOTHING;`,
-      [result.rows[0].user_id]
+      `INSERT INTO playlists (title, user_id, created_at)
+       VALUES ('Favorites', $1, NOW());`,
+      [newUser.user_id]
     );
 
-    res.status(201).json(result.rows[0]);
+    console.log(`[DB] Created user "${newUser.username}" (ID: ${newUser.user_id}) and initial Favorites playlist`);
+    res.status(201).json(newUser);
   } catch (err) {
+    console.error('[DB Error in create user]:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -121,15 +130,17 @@ app.put('/api/users/:userId/taste-vector', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
+    console.log(`[DB] Updated taste_vector for user ${userId} in users table`);
     res.json({ success: true, updatedUser: result.rows[0] });
   } catch (err) {
+    console.error('[DB Error in update taste vector]:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ── 3. pgvector Acoustic Recommendations ────────────────────────────────
 app.post('/api/recommendations', async (req, res) => {
-  const { vector, limit = 12, genreId = null } = req.body;
+  const { vector, limit = 12, genre = null } = req.body;
 
   if (!vector || !Array.isArray(vector)) {
     return res.status(400).json({ error: 'vector must be an array of numbers' });
@@ -145,8 +156,8 @@ app.post('/api/recommendations', async (req, res) => {
         t.title,
         t.duration,
         t.bpm,
-        g.name AS genre_name,
-        a.name AS artist_name,
+        g.name AS genre,
+        COALESCE(a.name, 'Unknown Artist') AS artist,
         af.feature_vector::text AS feature_vector,
         (af.feature_vector <=> $1::vector) AS distance,
         ROUND((1 - (af.feature_vector <=> $1::vector))::numeric, 4) AS similarity
@@ -159,9 +170,9 @@ app.post('/api/recommendations', async (req, res) => {
 
     const params = [vectorStr];
 
-    if (genreId) {
-      params.push(genreId);
-      query += ` WHERE t.genre_id = $2`;
+    if (genre && genre !== 'All') {
+      params.push(genre);
+      query += ` WHERE g.name = $2`;
     }
 
     params.push(limit);
@@ -176,6 +187,7 @@ app.post('/api/recommendations', async (req, res) => {
       recommendations: result.rows,
     });
   } catch (err) {
+    console.error('[DB Error in recommendations]:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -190,7 +202,7 @@ app.get('/api/tracks', async (req, res) => {
         t.duration,
         t.bpm,
         g.name AS genre,
-        a.name AS artist,
+        COALESCE(a.name, 'Unknown Artist') AS artist,
         af.energy,
         af.danceability,
         af.valence,
@@ -210,11 +222,12 @@ app.get('/api/tracks', async (req, res) => {
     const result = await pool.query(query);
     res.json(result.rows);
   } catch (err) {
+    console.error('[DB Error in get tracks]:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Insert new song and its audio feature embedding vector
+// Insert new track, artist, performs junction, and audio features
 app.post('/api/tracks', async (req, res) => {
   const {
     title,
@@ -230,11 +243,11 @@ app.post('/api/tracks', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // 1. Insert Track (Strict schema matching)
+    // 1. Insert Track (exact columns: title, duration, bpm, genre_id)
     const trackRes = await client.query(
-      `INSERT INTO tracks (title, genre_id, bpm, duration)
+      `INSERT INTO tracks (title, duration, bpm, genre_id)
        VALUES ($1, $2, $3, $4) RETURNING track_id;`,
-      [title, genreId, bpm, duration]
+      [title, duration, bpm, genreId]
     );
     const trackId = trackRes.rows[0].track_id;
 
@@ -252,7 +265,7 @@ app.post('/api/tracks', async (req, res) => {
     await client.query('INSERT INTO performs (artist_id, track_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING;', [
       artistId,
       trackId,
-      'Main',
+      'main',
     ]);
 
     // 4. Insert Audio Features & Vector
@@ -276,35 +289,39 @@ app.post('/api/tracks', async (req, res) => {
     );
 
     await client.query('COMMIT');
+    console.log(`[DB] Inserted track "${title}" (ID: ${trackId}) with 8D audio features vector`);
     res.status(201).json({ success: true, trackId, message: 'Track and vector added to database' });
   } catch (err) {
     await client.query('ROLLBACK');
+    console.error('[DB Error in insert track]:', err.message);
     res.status(500).json({ error: err.message });
   } finally {
     client.release();
   }
 });
 
-// ── 5. Playlists ────────────────────────────────────────────────────────
+// ── 5. Playlists & Playlist Tracks ──────────────────────────────────────
+// Exact columns: playlist_id, title, user_id, created_at
 app.get('/api/users/:userId/playlists', async (req, res) => {
   const { userId } = req.params;
   try {
     const result = await pool.query(
-      `SELECT p.playlist_id, p.title, p.is_system, p.created_at, COUNT(pt.track_id) AS track_count
+      `SELECT p.playlist_id, p.title, p.created_at, COUNT(pt.track_id)::int AS track_count
        FROM playlists p
        LEFT JOIN playlist_tracks pt ON p.playlist_id = pt.playlist_id
        WHERE p.user_id = $1
-       GROUP BY p.playlist_id
+       GROUP BY p.playlist_id, p.title, p.created_at
        ORDER BY p.playlist_id ASC;`,
       [userId]
     );
     res.json(result.rows);
   } catch (err) {
+    console.error('[DB Error in get playlists]:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Create new playlist for user
+// Create new playlist (exact columns: title, user_id, created_at)
 app.post(['/api/users/:userId/playlists', '/api/playlists'], async (req, res) => {
   const userId = req.params.userId || req.body.userId || 1;
   const { title } = req.body;
@@ -312,12 +329,12 @@ app.post(['/api/users/:userId/playlists', '/api/playlists'], async (req, res) =>
 
   try {
     const result = await pool.query(
-      `INSERT INTO playlists (title, user_id, is_system, created_at)
-       VALUES ($1, $2, false, NOW())
-       RETURNING *;`,
+      `INSERT INTO playlists (title, user_id, created_at)
+       VALUES ($1, $2, NOW())
+       RETURNING playlist_id, title, user_id, created_at;`,
       [title, userId]
     );
-    console.log(`[DB] Created playlist "${title}" for user ${userId}`);
+    console.log(`[DB] Created playlist "${title}" (ID: ${result.rows[0].playlist_id}) for user ${userId}`);
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error('[DB Error in create playlist]:', err.message);
@@ -325,7 +342,8 @@ app.post(['/api/users/:userId/playlists', '/api/playlists'], async (req, res) =>
   }
 });
 
-// Add track to playlist (fires trg_playlist_tracks_taste_update trigger in PostgreSQL!)
+// Add track to playlist (exact columns: playlist_id, track_id, position, added_at)
+// Automatically fires the trg_playlist_tracks_taste_update trigger in PostgreSQL!
 app.post('/api/playlists/:playlistId/tracks', async (req, res) => {
   const { playlistId } = req.params;
   const { trackId } = req.body;
@@ -339,13 +357,13 @@ app.post('/api/playlists/:playlistId/tracks', async (req, res) => {
     const position = posRes.rows[0].next_pos;
 
     await pool.query(
-      `INSERT INTO playlist_tracks (playlist_id, track_id, position)
-       VALUES ($1, $2, $3)
+      `INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at)
+       VALUES ($1, $2, $3, NOW())
        ON CONFLICT (playlist_id, track_id) DO NOTHING;`,
       [playlistId, numTrackId, position]
     );
-    console.log(`[DB Trigger Alert] Added track ${numTrackId} to playlist ${playlistId}. Trigger fired!`);
-    res.json({ success: true, playlistId, trackId: numTrackId, position });
+    console.log(`[DB Trigger Alert] Added track ${numTrackId} to playlist ${playlistId}. Trigger trg_playlist_tracks_taste_update fired!`);
+    res.json({ success: true, playlistId: Number(playlistId), trackId: numTrackId, position });
   } catch (err) {
     console.error('[DB Error in add track to playlist]:', err.message);
     res.status(500).json({ error: err.message });
@@ -361,29 +379,31 @@ app.delete('/api/playlists/:playlistId/tracks/:trackId', async (req, res) => {
       'DELETE FROM playlist_tracks WHERE playlist_id = $1 AND track_id = $2;',
       [playlistId, numTrackId]
     );
+    console.log(`[DB] Removed track ${numTrackId} from playlist ${playlistId}`);
     res.json({ success: true, message: 'Track removed from playlist' });
   } catch (err) {
+    console.error('[DB Error in remove track]:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Toggle Likes (Persists to system Favorites playlist)
+// Toggle Likes (Syncs to Favorites playlist)
 app.post('/api/users/:userId/likes', async (req, res) => {
   const { userId } = req.params;
   const { trackId } = req.body;
   const numTrackId = parseInt(String(trackId).replace(/\D/g, '') || trackId, 10) || 1;
 
   try {
-    // 1. Get or create Favorites playlist
+    // 1. Find or create Favorites playlist
     let plRes = await pool.query(
-      `SELECT playlist_id FROM playlists WHERE user_id = $1 AND is_system = true LIMIT 1;`,
+      `SELECT playlist_id FROM playlists WHERE user_id = $1 AND title IN ('Favorites', 'Liked Songs') LIMIT 1;`,
       [userId]
     );
     let playlistId = plRes.rows[0]?.playlist_id;
     if (!playlistId) {
       const created = await pool.query(
-        `INSERT INTO playlists (title, user_id, is_system, created_at)
-         VALUES ('Favorites', $1, true, NOW()) RETURNING playlist_id;`,
+        `INSERT INTO playlists (title, user_id, created_at)
+         VALUES ('Favorites', $1, NOW()) RETURNING playlist_id;`,
         [userId]
       );
       playlistId = created.rows[0].playlist_id;
@@ -404,14 +424,14 @@ app.post('/api/users/:userId/likes', async (req, res) => {
       isLiked = false;
     } else {
       await pool.query(
-        `INSERT INTO playlist_tracks (playlist_id, track_id, position)
-         VALUES ($1, $2, (SELECT COALESCE(MAX(position),0)+1 FROM playlist_tracks WHERE playlist_id = $1));`,
+        `INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at)
+         VALUES ($1, $2, (SELECT COALESCE(MAX(position),0)+1 FROM playlist_tracks WHERE playlist_id = $1), NOW());`,
         [playlistId, numTrackId]
       );
       isLiked = true;
     }
 
-    console.log(`[DB] User ${userId} ${isLiked ? 'liked' : 'unliked'} track ${numTrackId}`);
+    console.log(`[DB] User ${userId} ${isLiked ? 'liked' : 'unliked'} track ${numTrackId} in playlist ${playlistId}`);
     res.json({ success: true, trackId: numTrackId, isLiked });
   } catch (err) {
     console.error('[DB Error in toggle like]:', err.message);
@@ -419,18 +439,19 @@ app.post('/api/users/:userId/likes', async (req, res) => {
   }
 });
 
-// ── 6. Listen History ─────────────────────────────────────────────────
+// ── 6. Listen History (Exact columns: history_id, user_id, track_id, last_played, rating) ──
 app.post('/api/listen-history', async (req, res) => {
-  const { userId, trackId, completionPercent = 100, userLiked = false } = req.body;
+  const { userId, trackId, rating = 4 } = req.body;
   const numTrackId = parseInt(String(trackId).replace(/\D/g, '') || trackId, 10) || 1;
+
   try {
     const result = await pool.query(
-      `INSERT INTO listen_history (user_id, track_id, listened_at, completion_percent, user_liked)
-       VALUES ($1, $2, NOW(), $3, $4)
-       RETURNING *;`,
-      [userId || 1, numTrackId, completionPercent, Boolean(userLiked)]
+      `INSERT INTO listen_history (user_id, track_id, last_played, rating)
+       VALUES ($1, $2, NOW(), $3)
+       RETURNING history_id, user_id, track_id, last_played, rating;`,
+      [userId || 1, numTrackId, rating]
     );
-    console.log(`[DB] Recorded listen for user ${userId || 1}, track ${numTrackId}`);
+    console.log(`[DB] Inserted listen session into listen_history (user_id: ${userId || 1}, track_id: ${numTrackId}, last_played: NOW(), rating: ${rating})`);
     res.json({ success: true, historyRecord: result.rows[0] });
   } catch (err) {
     console.error('[DB Error in listen history]:', err.message);
@@ -442,19 +463,21 @@ app.get('/api/users/:userId/listen-history', async (req, res) => {
   const { userId } = req.params;
   try {
     const result = await pool.query(
-      `SELECT lh.*, t.title, t.bpm, a.name AS artist, g.name AS genre
+      `SELECT lh.history_id, lh.user_id, lh.track_id, lh.last_played, lh.rating,
+              t.title, t.bpm, t.duration, a.name AS artist, g.name AS genre
        FROM listen_history lh
        JOIN tracks t ON lh.track_id = t.track_id
        LEFT JOIN performs p ON t.track_id = p.track_id
        LEFT JOIN artist a ON p.artist_id = a.artist_id
        LEFT JOIN genre g ON t.genre_id = g.genre_id
        WHERE lh.user_id = $1
-       ORDER BY lh.listened_at DESC
+       ORDER BY lh.last_played DESC
        LIMIT 50;`,
       [userId]
     );
     res.json(result.rows);
   } catch (err) {
+    console.error('[DB Error in get listen history]:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -490,19 +513,22 @@ app.post('/api/query', async (req, res) => {
 
 // ── Startup & Connection Verification ──────────────────────────────────
 app.listen(PORT, async () => {
-  console.log(`\n VectorVibe PostgreSQL Bridge running on http://localhost:${PORT}`);
+  console.log(`\n======================================================`);
+  console.log(`🚀 VectorVibe PostgreSQL Bridge running on http://localhost:${PORT}`);
   try {
     const client = await pool.connect();
     const ver = await client.query('SELECT version();');
     console.log(` Connected to: ${ver.rows[0].version}`);
     const ext = await client.query("SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';");
     if (ext.rows.length > 0) {
-      console.log(` pgvector extension v${ext.rows[0].extversion} active on postgres-vector!`);
+      console.log(` pgvector extension v${ext.rows[0].extversion} active on postgres!`);
     } else {
       console.warn(' Warning: vector extension not detected in this database.');
     }
     client.release();
+    console.log(`======================================================\n`);
   } catch (err) {
-    console.error(` Error connecting to PostgreSQL at ${DATABASE_URL}:`, err.message);
+    console.error(`\n❌ Error connecting to PostgreSQL at ${DATABASE_URL}:`, err.message);
+    console.log(`======================================================\n`);
   }
 });
