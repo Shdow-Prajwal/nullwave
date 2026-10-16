@@ -29,6 +29,11 @@ function toPgVector(arr) {
   return `[${arr.join(',')}]`;
 }
 
+// ── Root Diagnostic Route ──────────────────────────────────────────────
+app.get('/', (req, res) => {
+  res.send('🚀 VectorVibe Express Bridge API is active!');
+});
+
 // ── 1. Health & Vector Verification ─────────────────────────────────────
 app.get('/api/health', async (req, res) => {
   try {
@@ -64,10 +69,41 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
+// Create new user
+app.post('/api/users', async (req, res) => {
+  const { username, email = '', tasteVector = [0.75, 0.65, 0.6, 0.5, 0.6, 0.25, 0.5, 0.45] } = req.body;
+  
+  if (!username) {
+    return res.status(400).json({ error: 'Username is required' });
+  }
+
+  try {
+    const vectorStr = toPgVector(tasteVector);
+    const result = await pool.query(
+      `INSERT INTO users (username, email, taste_vector)
+       VALUES ($1, $2, $3::vector)
+       RETURNING user_id, username, email, taste_vector::text, created_at;`,
+      [username, email, vectorStr]
+    );
+
+    // Auto-create default system "Favorites" playlist for this new user
+    await pool.query(
+      `INSERT INTO playlists (title, user_id, is_system, created_at)
+       VALUES ('Favorites', $1, true, NOW())
+       ON CONFLICT DO NOTHING;`,
+      [result.rows[0].user_id]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Update a user's 8D taste vector in PostgreSQL
 app.put('/api/users/:userId/taste-vector', async (req, res) => {
   const { userId } = req.params;
-  const { tasteVector } = req.body; // array of 8 floats, e.g. [0.8, 0.5, ...]
+  const { tasteVector } = req.body;
 
   if (!tasteVector || !Array.isArray(tasteVector)) {
     return res.status(400).json({ error: 'tasteVector must be an array of numbers' });
@@ -91,8 +127,6 @@ app.put('/api/users/:userId/taste-vector', async (req, res) => {
   }
 });
 
-// ── 3. pgvector Acoustic Recommendations ────────────────────────────────
-// Real cosine distance ranking using the pgvector <=> operator
 // ── 3. pgvector Acoustic Recommendations ────────────────────────────────
 app.post('/api/recommendations', async (req, res) => {
   const { vector, limit = 12, genreId = null } = req.body;
@@ -184,26 +218,23 @@ app.get('/api/tracks', async (req, res) => {
 app.post('/api/tracks', async (req, res) => {
   const {
     title,
-    artistName,
+    artistName = 'Unknown Artist',
     genreId = 1,
     duration = 180,
     bpm = 120,
-    album = 'Single',
-    coverImage = '',
-    previewUrl = '',
-    features, // { energy, danceability, valence, acousticness, instrumentalness, liveness, speechiness, tempo_norm }
-    vector,   // [8 floats]
+    features,
+    vector = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
   } = req.body;
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    // 1. Insert Track
+    // 1. Insert Track (Strict schema matching)
     const trackRes = await client.query(
-      `INSERT INTO tracks (title, genre_id, bpm, duration, album, cover_image, preview_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING track_id;`,
-      [title, genreId, bpm, duration, album, coverImage, previewUrl]
+      `INSERT INTO tracks (title, genre_id, bpm, duration)
+       VALUES ($1, $2, $3, $4) RETURNING track_id;`,
+      [title, genreId, bpm, duration]
     );
     const trackId = trackRes.rows[0].track_id;
 
@@ -255,7 +286,6 @@ app.post('/api/tracks', async (req, res) => {
 });
 
 // ── 5. Playlists ────────────────────────────────────────────────────────
-// Get playlists for user
 app.get('/api/users/:userId/playlists', async (req, res) => {
   const { userId } = req.params;
   try {
@@ -274,13 +304,11 @@ app.get('/api/users/:userId/playlists', async (req, res) => {
   }
 });
 
-// Add track to playlist
 app.post('/api/playlists/:playlistId/tracks', async (req, res) => {
   const { playlistId } = req.params;
   const { trackId } = req.body;
 
   try {
-    // Get next position
     const posRes = await pool.query(
       'SELECT COALESCE(MAX(position), 0) + 1 AS next_pos FROM playlist_tracks WHERE playlist_id = $1;',
       [playlistId]
@@ -299,7 +327,6 @@ app.post('/api/playlists/:playlistId/tracks', async (req, res) => {
   }
 });
 
-// Remove track from playlist
 app.delete('/api/playlists/:playlistId/tracks/:trackId', async (req, res) => {
   const { playlistId, trackId } = req.params;
   try {
@@ -313,8 +340,44 @@ app.delete('/api/playlists/:playlistId/tracks/:trackId', async (req, res) => {
   }
 });
 
-// ── 6. Raw SQL Query Console ───────────────────────────────────────────
-// Allows running queries from the in-app SQL inspector directly against your Docker DB
+// ── 6. Listen History ─────────────────────────────────────────────────
+app.post('/api/listen-history', async (req, res) => {
+  const { userId, trackId, completionPercent = 100, userLiked = false } = req.body;
+  try {
+    const result = await pool.query(
+      `INSERT INTO listen_history (user_id, track_id, listened_at, completion_percent, user_liked)
+       VALUES ($1, $2, NOW(), $3, $4)
+       RETURNING *;`,
+      [userId || 1, trackId, completionPercent, Boolean(userLiked)]
+    );
+    res.json({ success: true, historyRecord: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/users/:userId/listen-history', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const result = await pool.query(
+      `SELECT lh.*, t.title, t.bpm, a.name AS artist, g.name AS genre
+       FROM listen_history lh
+       JOIN tracks t ON lh.track_id = t.track_id
+       LEFT JOIN performs p ON t.track_id = p.track_id
+       LEFT JOIN artist a ON p.artist_id = a.artist_id
+       LEFT JOIN genre g ON t.genre_id = g.genre_id
+       WHERE lh.user_id = $1
+       ORDER BY lh.listened_at DESC
+       LIMIT 50;`,
+      [userId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── 7. Raw SQL Query Console ───────────────────────────────────────────
 app.post('/api/query', async (req, res) => {
   const { sql } = req.body;
 
@@ -359,43 +422,5 @@ app.listen(PORT, async () => {
     client.release();
   } catch (err) {
     console.error(` Error connecting to PostgreSQL at ${DATABASE_URL}:`, err.message);
-  }
-});
-
-// ── Record a Listen in listen_history ─────────────────────────────────
-app.post('/api/listen-history', async (req, res) => {
-  const { userId, trackId, completionPercent = 100, userLiked = false } = req.body;
-  try {
-    const result = await pool.query(
-      `INSERT INTO listen_history (user_id, track_id, listened_at, completion_percent, user_liked)
-       VALUES ($1, $2, NOW(), $3, $4)
-       RETURNING *;`,
-      [userId || 1, trackId, completionPercent, userLiked]
-    );
-    res.json({ success: true, historyRecord: result.rows[0] });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ── Get Listen History for User ───────────────────────────────────────
-app.get('/api/users/:userId/listen-history', async (req, res) => {
-  const { userId } = req.params;
-  try {
-    const result = await pool.query(
-      `SELECT lh.*, t.title, t.bpm, a.name AS artist, g.name AS genre, t.cover_image, t.preview_url
-       FROM listen_history lh
-       JOIN tracks t ON lh.track_id = t.track_id
-       LEFT JOIN performs p ON t.track_id = p.track_id
-       LEFT JOIN artist a ON p.artist_id = a.artist_id
-       LEFT JOIN genre g ON t.genre_id = g.genre_id
-       WHERE lh.user_id = $1
-       ORDER BY lh.listened_at DESC
-       LIMIT 50;`,
-      [userId]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
   }
 });
