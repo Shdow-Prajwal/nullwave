@@ -25,28 +25,62 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
 
   const playlists = relationalDbService.getPlaylists(currentUser.user_id);
 
-  const handleAddToPlaylist = (playlist: PlaylistRow) => {
+  const handleAddToPlaylist = async (playlist: PlaylistRow) => {
     const success = relationalDbService.addTrackToPlaylist(playlist.playlist_id, song.id);
     if (success) {
       setSuccessMsg(`Added "${song.title}" to "${playlist.title}"`);
     } else {
       setSuccessMsg(`Track already exists in "${playlist.title}"`);
     }
+
+    // Sync to PostgreSQL playlist_tracks so the trg_playlist_tracks_taste_update trigger fires!
+    try {
+      await fetch(`/api/playlists/${playlist.playlist_id}/tracks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trackId: song.id }),
+      });
+    } catch (err) {
+      console.warn('Could not sync to PostgreSQL playlist_tracks:', err);
+    }
+
     setTimeout(() => {
       setSuccessMsg(null);
       onClose();
     }, 1200);
   };
 
-  const handleCreateAndAdd = (e: React.FormEvent) => {
+  const handleCreateAndAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim()) return;
 
-    const created = relationalDbService.createPlaylist(currentUser.user_id, newTitle.trim());
+    const titleToCreate = newTitle.trim();
+    const created = relationalDbService.createPlaylist(currentUser.user_id, titleToCreate);
     relationalDbService.addTrackToPlaylist(created.playlist_id, song.id);
     setNewTitle('');
     setIsCreating(false);
     setSuccessMsg(`Created "${created.title}" & added "${song.title}"`);
+
+    // Sync playlist creation & track insertion to PostgreSQL
+    try {
+      const plRes = await fetch(`/api/users/${currentUser.user_id}/playlists`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: titleToCreate }),
+      });
+      if (plRes.ok) {
+        const plData = await plRes.json();
+        const realPlId = plData.playlist_id || created.playlist_id;
+        await fetch(`/api/playlists/${realPlId}/tracks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ trackId: song.id }),
+        });
+      }
+    } catch (err) {
+      console.warn('Could not sync created playlist to PostgreSQL:', err);
+    }
+
     setTimeout(() => {
       setSuccessMsg(null);
       onClose();

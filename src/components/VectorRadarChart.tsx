@@ -143,7 +143,7 @@ export const VectorRadarChart: React.FC<VectorRadarChartProps> = ({
             const ly = center + labelR * Math.sin(angle);
 
             // Text alignment based on horizontal position
-            let textAnchor = 'middle';
+            let textAnchor: 'middle' | 'start' | 'end' = 'middle';
             if (Math.abs(Math.cos(angle)) > 0.3) {
               textAnchor = Math.cos(angle) > 0 ? 'start' : 'end';
             }

@@ -304,9 +304,32 @@ app.get('/api/users/:userId/playlists', async (req, res) => {
   }
 });
 
+// Create new playlist for user
+app.post(['/api/users/:userId/playlists', '/api/playlists'], async (req, res) => {
+  const userId = req.params.userId || req.body.userId || 1;
+  const { title } = req.body;
+  if (!title) return res.status(400).json({ error: 'Playlist title is required' });
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO playlists (title, user_id, is_system, created_at)
+       VALUES ($1, $2, false, NOW())
+       RETURNING *;`,
+      [title, userId]
+    );
+    console.log(`[DB] Created playlist "${title}" for user ${userId}`);
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error('[DB Error in create playlist]:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Add track to playlist (fires trg_playlist_tracks_taste_update trigger in PostgreSQL!)
 app.post('/api/playlists/:playlistId/tracks', async (req, res) => {
   const { playlistId } = req.params;
   const { trackId } = req.body;
+  const numTrackId = parseInt(String(trackId).replace(/\D/g, '') || trackId, 10) || 1;
 
   try {
     const posRes = await pool.query(
@@ -319,20 +342,24 @@ app.post('/api/playlists/:playlistId/tracks', async (req, res) => {
       `INSERT INTO playlist_tracks (playlist_id, track_id, position)
        VALUES ($1, $2, $3)
        ON CONFLICT (playlist_id, track_id) DO NOTHING;`,
-      [playlistId, trackId, position]
+      [playlistId, numTrackId, position]
     );
-    res.json({ success: true, playlistId, trackId, position });
+    console.log(`[DB Trigger Alert] Added track ${numTrackId} to playlist ${playlistId}. Trigger fired!`);
+    res.json({ success: true, playlistId, trackId: numTrackId, position });
   } catch (err) {
+    console.error('[DB Error in add track to playlist]:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
+// Remove track from playlist
 app.delete('/api/playlists/:playlistId/tracks/:trackId', async (req, res) => {
   const { playlistId, trackId } = req.params;
+  const numTrackId = parseInt(String(trackId).replace(/\D/g, '') || trackId, 10) || 1;
   try {
     await pool.query(
       'DELETE FROM playlist_tracks WHERE playlist_id = $1 AND track_id = $2;',
-      [playlistId, trackId]
+      [playlistId, numTrackId]
     );
     res.json({ success: true, message: 'Track removed from playlist' });
   } catch (err) {
@@ -340,18 +367,73 @@ app.delete('/api/playlists/:playlistId/tracks/:trackId', async (req, res) => {
   }
 });
 
+// Toggle Likes (Persists to system Favorites playlist)
+app.post('/api/users/:userId/likes', async (req, res) => {
+  const { userId } = req.params;
+  const { trackId } = req.body;
+  const numTrackId = parseInt(String(trackId).replace(/\D/g, '') || trackId, 10) || 1;
+
+  try {
+    // 1. Get or create Favorites playlist
+    let plRes = await pool.query(
+      `SELECT playlist_id FROM playlists WHERE user_id = $1 AND is_system = true LIMIT 1;`,
+      [userId]
+    );
+    let playlistId = plRes.rows[0]?.playlist_id;
+    if (!playlistId) {
+      const created = await pool.query(
+        `INSERT INTO playlists (title, user_id, is_system, created_at)
+         VALUES ('Favorites', $1, true, NOW()) RETURNING playlist_id;`,
+        [userId]
+      );
+      playlistId = created.rows[0].playlist_id;
+    }
+
+    // 2. Check if track already liked
+    const exists = await pool.query(
+      `SELECT * FROM playlist_tracks WHERE playlist_id = $1 AND track_id = $2;`,
+      [playlistId, numTrackId]
+    );
+
+    let isLiked = false;
+    if (exists.rows.length > 0) {
+      await pool.query(
+        `DELETE FROM playlist_tracks WHERE playlist_id = $1 AND track_id = $2;`,
+        [playlistId, numTrackId]
+      );
+      isLiked = false;
+    } else {
+      await pool.query(
+        `INSERT INTO playlist_tracks (playlist_id, track_id, position)
+         VALUES ($1, $2, (SELECT COALESCE(MAX(position),0)+1 FROM playlist_tracks WHERE playlist_id = $1));`,
+        [playlistId, numTrackId]
+      );
+      isLiked = true;
+    }
+
+    console.log(`[DB] User ${userId} ${isLiked ? 'liked' : 'unliked'} track ${numTrackId}`);
+    res.json({ success: true, trackId: numTrackId, isLiked });
+  } catch (err) {
+    console.error('[DB Error in toggle like]:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── 6. Listen History ─────────────────────────────────────────────────
 app.post('/api/listen-history', async (req, res) => {
   const { userId, trackId, completionPercent = 100, userLiked = false } = req.body;
+  const numTrackId = parseInt(String(trackId).replace(/\D/g, '') || trackId, 10) || 1;
   try {
     const result = await pool.query(
       `INSERT INTO listen_history (user_id, track_id, listened_at, completion_percent, user_liked)
        VALUES ($1, $2, NOW(), $3, $4)
        RETURNING *;`,
-      [userId || 1, trackId, completionPercent, Boolean(userLiked)]
+      [userId || 1, numTrackId, completionPercent, Boolean(userLiked)]
     );
+    console.log(`[DB] Recorded listen for user ${userId || 1}, track ${numTrackId}`);
     res.json({ success: true, historyRecord: result.rows[0] });
   } catch (err) {
+    console.error('[DB Error in listen history]:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

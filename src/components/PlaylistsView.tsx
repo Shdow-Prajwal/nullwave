@@ -72,14 +72,25 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
   const activePlaylist = playlists.find((p) => p.playlist_id === selectedPlaylistId) || null;
   const activePlaylistTracks = activePlaylist ? relationalDbService.getTracksForPlaylist(activePlaylist.playlist_id) : [];
 
-  const handleCreatePlaylist = (e: React.FormEvent) => {
+  const handleCreatePlaylist = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPlaylistTitle.trim()) return;
 
-    const created = relationalDbService.createPlaylist(currentUser.user_id, newPlaylistTitle.trim());
+    const titleToCreate = newPlaylistTitle.trim();
+    const created = relationalDbService.createPlaylist(currentUser.user_id, titleToCreate);
     setNewPlaylistTitle('');
     setIsCreatingPlaylist(false);
     setSelectedPlaylistId(created.playlist_id);
+
+    try {
+      await fetch(`/api/users/${currentUser.user_id}/playlists`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: titleToCreate }),
+      });
+    } catch (err) {
+      console.warn('Could not sync playlist creation to backend:', err);
+    }
   };
 
   const handleDeletePlaylist = (playlistId: number, e: React.MouseEvent) => {
@@ -89,19 +100,36 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
     }
   };
 
-  const handleAddTrack = (song: Song) => {
+  const handleAddTrack = async (song: Song) => {
     if (!activePlaylist) return;
     relationalDbService.addTrackToPlaylist(activePlaylist.playlist_id, song.id);
     setAddTrackSearch('');
     setIsAddTrackOpen(false);
+
+    try {
+      await fetch(`/api/playlists/${activePlaylist.playlist_id}/tracks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trackId: song.id }),
+      });
+    } catch (err) {
+      console.warn('Could not sync track addition to backend:', err);
+    }
   };
 
-  const handleRemoveTrack = (songId: string) => {
+  const handleRemoveTrack = async (songId: string) => {
     if (!activePlaylist) return;
     if (activePlaylist.is_system && activePlaylist.title === 'Liked Songs') {
       onToggleLike(songId);
     } else {
       relationalDbService.removeTrackFromPlaylist(activePlaylist.playlist_id, songId);
+      try {
+        await fetch(`/api/playlists/${activePlaylist.playlist_id}/tracks/${songId}`, {
+          method: 'DELETE',
+        });
+      } catch (err) {
+        console.warn('Could not sync track deletion to backend:', err);
+      }
     }
   };
 

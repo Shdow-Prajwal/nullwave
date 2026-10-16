@@ -111,24 +111,48 @@ export default function App() {
   const [newUserName, setNewUserName] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
 
-  // 1. Initialize active user from localStorage/relational db service
+  // 1. Initialize active user from PostgreSQL Backend on Mount (with fallback)
   useEffect(() => {
-    const current = userDbService.getActiveUser();
-    if (current) {
-      setActiveUser(current);
-      if (current.taste_vector && current.taste_vector.length === 8) {
-        setTargetVector(arrayToMusicVector(current.taste_vector));
+    async function loadInitialUsers() {
+      try {
+        const res = await fetch('/api/users');
+        if (res.ok) {
+          const users = await res.json();
+          if (Array.isArray(users) && users.length > 0) {
+            const first = users[0];
+            setActiveUser(first);
+            if (first.taste_vector) {
+              const parsed = typeof first.taste_vector === 'string'
+                ? JSON.parse(first.taste_vector)
+                : first.taste_vector;
+              setTargetVector(arrayToMusicVector(parsed));
+            }
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Backend server not reachable yet, using local cache:', err);
       }
-    } else {
-      const all = userDbService.getAllUsers();
-      if (all.length > 0) {
-        const first = userDbService.setActiveUser(all[0]!.user_id);
-        setActiveUser(first);
-        if (first?.taste_vector) {
-          setTargetVector(arrayToMusicVector(first.taste_vector));
+
+      const current = userDbService.getActiveUser();
+      if (current) {
+        setActiveUser(current);
+        if (current.taste_vector && current.taste_vector.length === 8) {
+          setTargetVector(arrayToMusicVector(current.taste_vector));
+        }
+      } else {
+        const all = userDbService.getAllUsers();
+        if (all.length > 0) {
+          const first = userDbService.setActiveUser(all[0]!.user_id);
+          setActiveUser(first);
+          if (first?.taste_vector) {
+            setTargetVector(arrayToMusicVector(first.taste_vector));
+          }
         }
       }
     }
+
+    loadInitialUsers();
 
     // Subscribe to DB updates
     const unsubscribe = userDbService.subscribe(() => {
@@ -187,22 +211,50 @@ export default function App() {
 
   // 5. Connect Sliders to Database: Update targetVector AND write to PostgreSQL users table
   const handleVectorChange = useCallback(
-    (updated: MusicVector) => {
+    async (updated: MusicVector) => {
       setTargetVector(updated);
-      if (activeUser) {
-        const arr = musicVectorToArray(updated);
-        userDbService.updateUserTasteVector(activeUser.user_id, arr);
+      if (!activeUser) return;
+
+      const arr = musicVectorToArray(updated);
+      userDbService.updateUserTasteVector(activeUser.user_id, arr);
+
+      try {
+        await fetch(`/api/users/${activeUser.user_id}/taste-vector`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tasteVector: arr }),
+        });
+      } catch (err) {
+        console.warn('Backend sync failed, saved locally:', err);
       }
     },
     [activeUser]
   );
 
   // Create & launch user from Landing Page onboarding or In-App prompt
-  const handleCreateAndLaunchUser = (username: string, email?: string) => {
+  const handleCreateAndLaunchUser = async (username: string, email?: string) => {
+    const vectorArr = musicVectorToArray(targetVector);
+
+    try {
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, email, tasteVector: vectorArr }),
+      });
+      if (res.ok) {
+        const created = await res.json();
+        setActiveUser(created);
+        setShowLandingPage(false);
+        return;
+      }
+    } catch (err) {
+      console.warn('Backend offline, creating locally:', err);
+    }
+
     const newUser = userDbService.createUser(
       username,
       email,
-      musicVectorToArray(targetVector)
+      vectorArr
     );
     setActiveUser(newUser);
     setShowLandingPage(false);
@@ -230,8 +282,10 @@ export default function App() {
 
   // Record a listen in history when a song is played (updates state & listen_history table)
   const recordListeningSession = useCallback(
-    (song: Song, completion: number = 100) => {
+    async (song: Song, completion: number = 100) => {
       const uid = activeUser?.user_id || 1;
+      const isLiked = likedSongIds.has(song.id);
+
       relationalDbService.recordListen(uid, song.id, completion >= 80 ? 5 : undefined);
 
       setHistory((prev) => {
@@ -241,11 +295,27 @@ export default function App() {
           song,
           listenedAt: new Date().toISOString(),
           completionPercent: completion,
-          userLiked: likedSongIds.has(song.id),
+          userLiked: isLiked,
           contextVibe: song.genre,
         };
         return [newRecord, ...prev.slice(0, 49)];
       });
+
+      // Send to PostgreSQL listen_history table via server.js
+      try {
+        await fetch('/api/listen-history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: uid,
+            trackId: song.id,
+            completionPercent: completion,
+            userLiked: isLiked,
+          }),
+        });
+      } catch (err) {
+        console.warn('Could not post to listen_history:', err);
+      }
     },
     [activeUser?.user_id, likedSongIds]
   );
@@ -287,7 +357,7 @@ export default function App() {
   }, [catalog, currentSong.id, isPlaying, recordListeningSession]);
 
   // Like toggle: persists to PostgreSQL playlist_tracks & listen_history tables
-  const handleToggleLike = (songId: string) => {
+  const handleToggleLike = async (songId: string) => {
     const uid = activeUser?.user_id || 1;
     const isNowLiked = relationalDbService.toggleLikeSong(uid, songId);
     const updatedLiked = relationalDbService.getLikedSongCodes(uid);
@@ -296,6 +366,17 @@ export default function App() {
     setHistory((prev) =>
       prev.map((r) => (r.songId === songId ? { ...r, userLiked: isNowLiked } : r))
     );
+
+    // Sync to PostgreSQL Favorites playlist in playlist_tracks
+    try {
+      await fetch(`/api/users/${uid}/likes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trackId: songId }),
+      });
+    } catch (err) {
+      console.warn('Could not sync like to PostgreSQL:', err);
+    }
   };
 
   const handleClearHistory = () => {
