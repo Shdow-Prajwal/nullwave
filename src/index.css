@@ -10,18 +10,21 @@
 @layer base {
   :root {
     color-scheme: dark;
-    --ink: #101116;
-    --raised: #1d1c24;
-    --paper: #f5f3f7;
-    --mauve: #bcb4c8;
-    --aura-lilac: #b6a7ff;
-    --aura-peach: #e3a18d;
-    --aura-lime: #d6ee9a;
+    --ink: #140D0F;
+    --raised: #241719;
+    --paper: #F6EBDD;
+    --mauve: #D2BBA8;
+    --aura-lilac: #FF7F4D;
+    --aura-peach: #E88C98;
+    --aura-lime: #CDEB66;
+    --ember: #FF7F4D;
+    --clay: #E88C98;
+    --live: #CDEB66;
   }
 
   body {
     font-family: 'Syne', ui-sans-serif, system-ui, sans-serif;
-    background: #08090f;
+    background: #140D0F;
     color: var(--paper);
   }
 
@@ -34,11 +37,13 @@
 
 .font-display { font-family: 'Unbounded', 'Syne', ui-sans-serif, sans-serif; letter-spacing: -0.035em; }
 
+.glass,
 .glass-surface {
-  background: color-mix(in srgb, var(--raised) 78%, transparent);
-  border: 1px solid color-mix(in srgb, var(--paper) 12%, transparent);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 20px 60px rgba(0,0,0,.2);
-  backdrop-filter: blur(24px) saturate(1.6);
+  background: linear-gradient(135deg, rgba(255,232,214,.105), rgba(255,232,214,.035) 55%, rgba(255,127,77,.045));
+  border: 0 !important;
+  border-radius: 28px;
+  box-shadow: inset 0 1px 0 rgba(255,236,220,.14), 0 20px 60px rgba(0,0,0,.32);
+  backdrop-filter: blur(30px) saturate(1.45);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -162,10 +167,10 @@
   position: relative;
   overflow: hidden;
   isolation: isolate;
-  background: linear-gradient(135deg, rgba(255,255,255,.065), rgba(255,255,255,.018) 52%, rgba(139,92,246,.045));
-  border-color: rgba(255,255,255,.12);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 18px 50px rgba(0,0,0,.24);
-  transition: transform .45s cubic-bezier(.4,0,.2,1), background .45s ease, border-color .45s ease, box-shadow .45s ease;
+  background: linear-gradient(135deg, rgba(255,232,214,.105), rgba(255,232,214,.035) 52%, rgba(255,127,77,.045));
+  border-color: transparent;
+  box-shadow: inset 0 1px 0 rgba(255,236,220,.14), 0 18px 50px rgba(0,0,0,.32);
+  transition: background .22s cubic-bezier(.16,1,.3,1), filter .22s cubic-bezier(.16,1,.3,1), box-shadow .22s cubic-bezier(.16,1,.3,1);
 }
 
 .aura-surface::before {
@@ -181,10 +186,9 @@
 }
 
 .aura-surface:hover {
-  transform: translateY(-3px);
-  background: linear-gradient(135deg, rgba(255,255,255,.09), rgba(255,255,255,.028) 52%, rgba(139,92,246,.08));
-  border-color: rgba(255,255,255,.2);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 24px 60px rgba(0,0,0,.34), 0 0 28px rgba(99,102,241,.08);
+  filter: brightness(1.08);
+  background: linear-gradient(135deg, rgba(255,232,214,.14), rgba(255,232,214,.05) 52%, rgba(255,127,77,.07));
+  box-shadow: inset 0 1px 0 rgba(255,236,220,.18), 0 24px 60px rgba(0,0,0,.36);
 }
 
 .aura-surface:hover::before { opacity: 1; transform: translateX(120%); }
@@ -252,7 +256,7 @@
 
 /* Aura-inspired navigation shell and responsive layout polish */
 .aura-sidebar-shell {
-  background: linear-gradient(180deg, rgba(16,17,22,.94), rgba(24,22,31,.86));
+  background: linear-gradient(180deg, rgba(20,13,15,.96), rgba(36,23,25,.9));
   backdrop-filter: blur(28px) saturate(1.35);
   box-shadow: 12px 0 42px rgba(0,0,0,.22), inset -1px 0 rgba(255,255,255,.04);
 }
@@ -277,7 +281,7 @@
   transition: color .35s ease, transform .35s cubic-bezier(.16,1,.3,1), background .35s ease, border-color .35s ease, box-shadow .35s ease;
 }
 .aura-nav-item svg { width: 19px; height: 19px; transition: transform .35s cubic-bezier(.16,1,.3,1); }
-.aura-nav-item:hover { color: var(--paper); transform: translateX(4px); background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.14); box-shadow: 0 10px 24px rgba(0,0,0,.2); }
+.aura-nav-item:hover { color: var(--paper); background: rgba(255,232,214,.11); border-color: rgba(255,236,220,.14); filter: brightness(1.08); }
 .aura-nav-item:hover svg { transform: scale(1.12); }
 .aura-nav-item.is-active { color: #17151c; background: linear-gradient(135deg, var(--aura-lilac), #eee4ff); border-color: rgba(255,255,255,.55); box-shadow: 0 10px 28px rgba(182,167,255,.28), inset 0 1px rgba(255,255,255,.72); }
 .aura-nav-item.is-active::after { content: ''; position: absolute; right: -16px; width: 3px; height: 22px; border-radius: 999px; background: var(--aura-peach); box-shadow: 0 0 16px var(--aura-peach); }
@@ -286,6 +290,8 @@
 .aura-app-shell button { -webkit-tap-highlight-color: transparent; }
 
 @media (max-width: 640px) {
+  .glass, .glass-surface, .search-modal-panel { border-radius: 22px; backdrop-filter: blur(18px) saturate(1.3); }
+  .search-modal-panel { max-height: 90vh; overflow-y: auto; }
   .aura-sidebar-shell { top: auto; bottom: 0; width: 100%; height: 72px; flex-direction: row; justify-content: center; gap: 8px; padding: 8px 10px; border-right: 0; border-top: 1px solid rgba(255,255,255,.1); }
   .aura-brand-mark, .aura-sidebar-shell > [data-radix-popper-content-wrapper] { display: none; }
   .aura-sidebar-shell nav { flex: 0 1 auto; flex-direction: row; gap: 4px; }
@@ -297,14 +303,16 @@
 
 /* Search overlay inherits the Aura glass language without changing its layout. */
 .search-modal-backdrop {
-  background: radial-gradient(circle at 50% 18%, rgba(139,92,246,.16), transparent 34%), rgba(5, 6, 12, .88);
+  background: radial-gradient(circle at 50% 18%, rgba(255,127,77,.18), transparent 34%), rgba(20,13,15,.9);
   backdrop-filter: blur(18px) saturate(1.5);
   animation: searchBackdropIn .45s ease both;
 }
 .search-modal-panel {
-  background: linear-gradient(135deg, rgba(34, 28, 48, .94), rgba(16, 18, 29, .96) 58%, rgba(23, 35, 52, .94));
-  border: 1px solid rgba(214, 238, 154, .2);
-  box-shadow: 0 30px 100px rgba(0,0,0,.6), 0 0 0 1px rgba(182,167,255,.08), inset 0 1px rgba(255,255,255,.12);
+  background: linear-gradient(135deg, rgba(58,35,32,.96), rgba(30,19,20,.97) 58%, rgba(48,29,31,.95));
+  border: 0;
+  border-radius: 28px;
+  box-shadow: inset 0 1px 0 rgba(255,236,220,.14), 0 30px 100px rgba(0,0,0,.62);
+  backdrop-filter: blur(30px) saturate(1.45);
   animation: searchPanelIn .55s cubic-bezier(.16,1,.3,1) both;
 }
 .search-modal-panel input:focus { border-color: rgba(214,238,154,.75); box-shadow: 0 0 0 3px rgba(214,238,154,.12), 0 0 28px rgba(182,167,255,.12); }
