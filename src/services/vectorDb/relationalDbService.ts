@@ -1026,6 +1026,8 @@ class RelationalDatabaseEngine {
               const playlist = this.playlists.find((p) => p.playlist_id === pt.playlist_id);
               const track = this.tracks.find((t) => t.track_id === pt.track_id);
               const user = users.find((u) => u.user_id === playlist?.user_id);
+              const perf = this.performs.find((p) => p.track_id === pt.track_id);
+              const artistName = perf ? this.artists.find((a) => a.artist_id === perf.artist_id)?.name || 'Unknown' : 'Unknown';
               return {
                 playlist_id: pt.playlist_id,
                 playlist_title: playlist?.title || 'Unknown',
@@ -1033,7 +1035,7 @@ class RelationalDatabaseEngine {
                 username: user?.username || 'user',
                 track_id: pt.track_id,
                 track_title: track?.title || 'Unknown',
-                artist: track?.artistName || 'Unknown',
+                artist: artistName,
                 position: pt.position,
                 added_at: pt.added_at,
               };
@@ -1041,10 +1043,12 @@ class RelationalDatabaseEngine {
           } else if (upper.includes('AUDIO_FEATURES') && upper.includes('TRACKS')) {
             sourceRows = this.tracks.map((t) => {
               const af = this.audio_features.find((f) => f.track_id === t.track_id);
+              const perf = this.performs.find((p) => p.track_id === t.track_id);
+              const artistName = perf ? this.artists.find((a) => a.artist_id === perf.artist_id)?.name || 'Unknown' : 'Unknown';
               return {
                 track_id: t.track_id,
                 title: t.title,
-                artist: t.artistName,
+                artist: artistName,
                 genre_id: t.genre_id,
                 energy: af?.energy,
                 danceability: af?.danceability,
@@ -1257,8 +1261,7 @@ DROP TABLE IF EXISTS users CASCADE;
 -- Step 3: DDL - Create All 11 Tables
 CREATE TABLE genre (
     genre_id SERIAL PRIMARY KEY,
-    name VARCHAR(50) UNIQUE NOT NULL,
-    description TEXT
+    name VARCHAR(50) UNIQUE NOT NULL
 );
 
 CREATE TABLE artist (
@@ -1358,8 +1361,8 @@ USING hnsw (taste_vector vector_cosine_ops);
 -- ============================================================================
 
 -- 1. Genres
-INSERT INTO genre (genre_id, name, description) VALUES
-${this.genres.map((g) => `  (${g.genre_id}, '${g.name.replace(/'/g, "''")}', '${g.description.replace(/'/g, "''")}')`).join(',\n')};
+INSERT INTO genre (genre_id, name) VALUES
+${this.genres.map((g) => `  (${g.genre_id}, '${g.name.replace(/'/g, "''")}')`).join(',\n')};
 
 -- 2. Artists
 INSERT INTO artist (artist_id, name, bio) VALUES
@@ -1367,7 +1370,7 @@ ${this.artists.map((a) => `  (${a.artist_id}, '${a.name.replace(/'/g, "''")}', '
 
 -- 3. Moods
 INSERT INTO moods (mood_id, name) VALUES
-${this.moods.map((m) => `  (${m.mood_id}, '${m.name.replace(/'/g, "''")}')`).join(',\n')};
+${this.moods.map((m) => `  (${m.mood_id}, '${m.label.replace(/'/g, "''")}')`).join(',\n')};
 
 -- 4. Users (With Real 8D Taste Vectors)
 INSERT INTO users (user_id, username, email, created_at, taste_vector) VALUES

@@ -18,7 +18,6 @@ import {
   User,
   X,
   ChevronRight,
-  Info,
 } from 'lucide-react';
 import { Song, MusicVector, HistoryRecord, RecommendationResult, MusicGenre } from './types/music';
 import { MOCK_SONG_CATALOG, INITIAL_LISTENING_HISTORY, GENRE_THEMES } from './data/mockCatalog';
@@ -420,10 +419,6 @@ export default function App() {
             <div className="relative pt-4 pb-2">
               <div className="flex flex-col md:flex-row items-start md:items-end justify-between gap-6">
                 <div className="max-w-2xl space-y-3">
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium bg-white/5 border border-white/10 text-violet-300">
-                    <Sparkles className="w-3.5 h-3.5 text-violet-400" />
-                    <span>Acoustic pgvector · Real Studio Previews</span>
-                  </div>
                   <h1 className="font-display text-4xl sm:text-6xl lg:text-7xl font-semibold tracking-tight text-[#f2ece4] leading-[0.95]">
                     Find the feeling.
                   </h1>
@@ -576,12 +571,6 @@ export default function App() {
                   <h1 className="text-xl font-semibold text-white tracking-tight">
                     Spotify &amp; pgvector Catalog
                   </h1>
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-mono bg-amber-500/15 text-amber-300 border border-amber-500/25">
-                    {catalog.length} In-Memory Tracks
-                  </span>
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
-                    Kaggle 1.2M+ Real Songs
-                  </span>
                 </div>
                 <p className="text-xs text-white/60 mt-1 max-w-xl">
                   Curated tracks spanning Daft Punk, The Weeknd, Arctic Monkeys, Kavinsky, SZA, and more.
@@ -606,29 +595,6 @@ export default function App() {
                   <Search className="w-4 h-4" />
                   <span>Search &amp; Import Any Track</span>
                 </button>
-              </div>
-            </div>
-
-            {/* Clear user-facing explanation of the '39' count and local memory cache purpose */}
-            <div className="p-4 sm:p-5 rounded-2xl backdrop-blur-xl bg-amber-500/[0.04] border border-amber-500/20 ring-1 ring-amber-500/10 flex flex-col sm:flex-row items-start gap-3.5 text-xs">
-              <div className="p-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 shrink-0 mt-0.5">
-                <Info className="w-4 h-4" />
-              </div>
-              <div className="space-y-1.5 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="font-semibold text-white text-sm">
-                    Why does the Catalog indicate ({catalog.length})?
-                  </h3>
-                  <span className="px-2 py-0.5 rounded-md text-[10px] font-mono uppercase tracking-wider bg-amber-400/15 text-amber-300 border border-amber-400/30 font-medium">
-                    Local Memory Cache &amp; Relational Engine
-                  </span>
-                </div>
-                <p className="text-white/80 leading-relaxed">
-                  The <strong className="text-amber-300 font-semibold">{catalog.length}</strong> count represents the active in-memory cached subset of tracks loaded into the PostgreSQL <code className="text-violet-300 font-mono">tracks</code> and <code className="text-violet-300 font-mono">audio_features</code> tables.
-                </p>
-                <p className="text-white/55 leading-relaxed text-[11px]">
-                  Keeping this curated subset directly in active memory guarantees sub-millisecond 8D vector cosine distance queries and instant browser audio synthesis. You can expand variety at any time using <span className="text-white/85 font-medium">"Grow Catalog (+8)"</span> or import real music worldwide via <span className="text-white/85 font-medium">"Search &amp; Import Any Track"</span>. Every new song executes real <code className="text-emerald-300 font-mono">INSERT INTO</code> relational queries!
-                </p>
               </div>
             </div>
 

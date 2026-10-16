@@ -9,7 +9,6 @@ import {
   Trash2,
   Plus,
   Terminal,
-  Database,
   Check,
   Disc,
   Clock,
@@ -129,10 +128,6 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
 
         <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-5">
           <div className="space-y-1.5 max-w-2xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium bg-violet-500/15 text-violet-300 border border-violet-500/25">
-              <Database className="w-3.5 h-3.5 text-violet-400" />
-              <span>PostgreSQL Tables: playlists &amp; playlist_tracks</span>
-            </div>
             <h1 className="text-2xl sm:text-3xl font-semibold text-white tracking-tight">
               Relational Playlists &amp; Collections
             </h1>
@@ -316,11 +311,6 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                       <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight">
                         {activePlaylist.title}
                       </h2>
-                      {activePlaylist.is_system && (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                          Auto-Synced with Likes
-                        </span>
-                      )}
                     </div>
                     <p className="text-xs text-white/60 mt-0.5 flex items-center gap-2">
                       <span>{activePlaylistTracks.length} tracks</span>
