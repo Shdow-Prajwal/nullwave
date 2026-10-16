@@ -376,9 +376,13 @@ export default function App() {
 
   // ── 2. Render Main Application Studio ──
   return (
-    <div className="min-h-screen bg-[#101116] text-[#f5f3f7] flex flex-col relative pb-36 font-sans aura-app-shell">
+    <div className="min-h-screen text-[#f5f3f7] flex flex-col relative pb-36 font-sans aura-app-shell isolate">
       {/* Dynamic Atmospheric Background */}
-      <DynamicGenreBackground currentGenre={currentSong.genre} isPlaying={isPlaying} />
+      <DynamicGenreBackground
+        currentGenre={currentSong.genre}
+        isPlaying={isPlaying}
+        coverImage={currentSong.coverImage}
+      />
 
       {/* Aura-inspired sidebar navigation; the existing views and controls remain unchanged. */}
       <header className="aura-sidebar-shell fixed left-0 top-0 z-40 flex h-screen w-[88px] flex-col items-center border-r border-white/10 px-3 py-5">
