@@ -17,7 +17,7 @@ export default defineConfig(() => {
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
       proxy: {
         '/api': {
-          target: 'http://localhost:3001',
+          target: 'http://localhost:5000',
           changeOrigin: true,
           configure: (proxy) => {
             proxy.on('error', (err, _req, res) => {
@@ -26,7 +26,7 @@ export default defineConfig(() => {
                 res.end(
                   JSON.stringify({
                     status: 'offline',
-                    message: 'Backend bridge server on port 3001 is offline.',
+                    message: 'Backend bridge server on port 5000 is offline.',
                     error: err.message,
                   })
                 );

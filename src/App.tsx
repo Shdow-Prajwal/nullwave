@@ -194,9 +194,8 @@ export default function App() {
 
   // User Listening History & Liked Songs State
   const [history, setHistory] = useState<HistoryRecord[]>(INITIAL_LISTENING_HISTORY);
-  const [likedSongIds, setLikedSongIds] = useState<Set<string>>(() =>
-    relationalDbService.getLikedSongCodes(1)
-  );
+  const [likedSongIds, setLikedSongIds] = useState<Set<string>>(() => new Set());
+  const [likesLoadError, setLikesLoadError] = useState<string | null>(null);
 
   // Modals & Drawers
   const [inspectingSong, setInspectingSong] = useState<Song | null>(null);
@@ -294,7 +293,6 @@ export default function App() {
             const mappedSongs = dbTracks.map(mapDbTrackToSong);
             setCatalog(mappedSongs);
             pgVectorService.setCatalog(mappedSongs);
-            relationalDbService.setCatalogReference(mappedSongs);
             setCurrentSong((prev) => (prev ? prev : mappedSongs[0]!));
             return;
           }
@@ -308,66 +306,64 @@ export default function App() {
         const songs = relationalDbService.getAllSongs();
         setCatalog(songs);
         pgVectorService.setCatalog(songs);
-        relationalDbService.setCatalogReference(songs);
         if (songs.length > 0) setCurrentSong((prev) => (prev ? prev : songs[0]!));
       }
     }
 
     loadCatalog();
 
-    const syncLikesAndData = async () => {
-      const uid = activeUser?.user_id || 1;
-      setLikedSongIds(new Set(relationalDbService.getLikedSongCodes(uid)));
-
-      // Fetch user's persistent listen history from PostgreSQL container
-      try {
-        const hRes = await fetch(`${API_BASE_URL}/users/${uid}/listen-history`);
-        if (hRes.ok) {
-          const dbHistory = await hRes.json();
-          if (Array.isArray(dbHistory) && dbHistory.length > 0 && isMounted) {
-            setHistory(
-              dbHistory.map((row: any) => ({
-                id: `hist-${row.history_id}`,
-                songId: String(row.track_id),
-                song: {
-                  id: String(row.track_id),
-                  title: row.title || `Track #${row.track_id}`,
-                  artist: row.artist || 'Unknown Artist',
-                  album: 'Single',
-                  genre: row.genre || 'Nu-Disco / Pop',
-                  bpm: row.bpm || 120,
-                  durationSeconds: row.duration || 210,
-                  coverImage: row.cover_image,
-                  previewUrl: row.preview_url,
-                  vector: {
-                    danceability: 0.8,
-                    energy: 0.8,
-                    valence: 0.6,
-                    beatsBpmNormalized: 0.5,
-                    vibeChillToHype: 0.7,
-                    acousticness: 0.1,
-                    instrumentalness: 0.5,
-                    moodHarmonics: 0.5,
-                  },
-                  tags: [row.genre || 'Pop'],
-                },
-                listenedAt: row.last_played || new Date().toISOString(),
-                completionPercent: 100,
-                userLiked: true,
-                contextVibe: row.genre || 'Acoustic',
-              }))
-            );
-          }
-        }
-      } catch {
-        // Fallback to local history
-      }
-    };
-    syncLikesAndData();
-    const unsub = relationalDbService.subscribe(syncLikesAndData);
     return () => {
       isMounted = false;
-      unsub();
+    };
+  }, [activeUser?.user_id]);
+
+  useEffect(() => {
+    let isCurrentUser = true;
+    const uid = activeUser?.user_id || 1;
+    setLikedSongIds(new Set());
+    setLikesLoadError(null);
+
+    const loadLikes = async () => {
+      let response: Response;
+      try {
+        response = await fetch(`${API_BASE_URL}/users/${uid}/likes`);
+      } catch (err) {
+        console.warn('Could not connect to PostgreSQL likes, using local likes:', err);
+        if (isCurrentUser) {
+          setLikedSongIds(relationalDbService.getLikedSongCodes(uid));
+        }
+        return;
+      }
+
+      if (!response.ok) {
+        const message = `Likes request failed (${response.status})`;
+        console.error(message);
+        if (isCurrentUser) {
+          setLikesLoadError(message);
+        }
+        return;
+      }
+
+      try {
+        const trackIds: unknown = await response.json();
+        if (!Array.isArray(trackIds)) {
+          throw new Error('Likes response was not an array');
+        }
+        if (isCurrentUser) {
+          setLikedSongIds(new Set(trackIds.map(String)));
+          setLikesLoadError(null);
+        }
+      } catch (err) {
+        console.error('Could not parse PostgreSQL likes:', err);
+        if (isCurrentUser) {
+          setLikesLoadError('The likes API returned an invalid response');
+        }
+      }
+    };
+
+    void loadLikes();
+    return () => {
+      isCurrentUser = false;
     };
   }, [activeUser?.user_id]);
 
@@ -474,7 +470,6 @@ export default function App() {
       if (target.taste_vector && target.taste_vector.length === 8) {
         setTargetVector(arrayToMusicVector(target.taste_vector));
       }
-      setLikedSongIds(relationalDbService.getLikedSongCodes(userId));
     }
   };
 
@@ -566,22 +561,53 @@ export default function App() {
   // Toggle Like
   const handleToggleLike = async (songId: string) => {
     const uid = activeUser?.user_id || 1;
-    const isNowLiked = relationalDbService.toggleLikeSong(uid, songId);
-    const updatedLiked = relationalDbService.getLikedSongCodes(uid);
-    setLikedSongIds(updatedLiked);
-
-    setHistory((prev) =>
-      prev.map((r) => (r.songId === songId ? { ...r, userLiked: isNowLiked } : r))
-    );
-
+    let response: Response;
     try {
-      await fetch(`${API_BASE_URL}/users/${uid}/likes`, {
+      response = await fetch(`${API_BASE_URL}/users/${uid}/likes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ trackId: songId }),
       });
     } catch (err) {
-      console.warn('Could not sync like to PostgreSQL:', err);
+      console.warn('Could not sync like to PostgreSQL, using local likes:', err);
+      const isNowLiked = relationalDbService.toggleLikeSong(uid, songId);
+      setLikedSongIds(relationalDbService.getLikedSongCodes(uid));
+      setHistory((prev) =>
+        prev.map((r) => (r.songId === songId ? { ...r, userLiked: isNowLiked } : r))
+      );
+      return;
+    }
+
+    if (!response.ok) {
+      const message = `Like request failed (${response.status})`;
+      console.error(message);
+      setLikesLoadError(message);
+      return;
+    }
+
+    try {
+      const result: { isLiked?: boolean } = await response.json();
+      if (typeof result.isLiked !== 'boolean') {
+        throw new Error('Like response did not include an isLiked value');
+      }
+      const isNowLiked = result.isLiked;
+      setLikesLoadError(null);
+
+      setLikedSongIds((current) => {
+        const updated = new Set(current);
+        if (isNowLiked) {
+          updated.add(songId);
+        } else {
+          updated.delete(songId);
+        }
+        return updated;
+      });
+      setHistory((prev) =>
+        prev.map((r) => (r.songId === songId ? { ...r, userLiked: isNowLiked } : r))
+      );
+    } catch (err) {
+      console.error('Could not read like status from PostgreSQL:', err);
+      setLikesLoadError('Could not read the like status from PostgreSQL');
     }
   };
 
@@ -722,6 +748,11 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 flex-1 w-full space-y-8 pl-28">
+        {likesLoadError && (
+          <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+            Saved likes could not be restored: {likesLoadError}. Restart the backend on port 5000, then reload.
+          </div>
+        )}
         {/* VIEW 1: Recommender & Vector Explorer */}
         {activeTab === 'recommender' && (
           <div className="space-y-8">

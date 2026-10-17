@@ -394,6 +394,63 @@ app.get('/api/users/:userId/playlists', async (req, res) => {
   }
 });
 
+app.get('/api/users/:userId/likes', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT pt.track_id::text AS track_id
+       FROM playlists p
+       JOIN playlist_tracks pt ON pt.playlist_id = p.playlist_id
+       WHERE p.user_id = $1 AND p.title IN ('Favorites', 'Liked Songs')
+       ORDER BY track_id;`,
+      [userId]
+    );
+    res.json(result.rows.map((row) => row.track_id));
+  } catch (err) {
+    console.error('[DB Error in get liked tracks]:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/playlists/:playlistId/tracks', async (req, res) => {
+  const { playlistId } = req.params;
+  try {
+    const result = await pool.query(
+      `SELECT
+         t.track_id::text AS track_id,
+         t.title,
+         t.duration,
+         t.bpm,
+         COALESCE(g.name, 'Nu-Disco / Pop') AS genre,
+         COALESCE(STRING_AGG(DISTINCT a.name, ', '), 'Unknown Artist') AS artist,
+         t.cover_image,
+         t.preview_url,
+         MIN(pt.position) AS position
+       FROM playlist_tracks pt
+       JOIN playlists stored_playlist ON stored_playlist.playlist_id = pt.playlist_id
+       JOIN playlists selected_playlist ON selected_playlist.playlist_id = $1
+       JOIN tracks t ON t.track_id = pt.track_id
+       LEFT JOIN performs p ON p.track_id = t.track_id
+       LEFT JOIN artist a ON a.artist_id = p.artist_id
+       LEFT JOIN genre g ON g.genre_id = t.genre_id
+       WHERE pt.playlist_id = $1
+          OR (
+            selected_playlist.title IN ('Favorites', 'Liked Songs')
+            AND stored_playlist.user_id = selected_playlist.user_id
+            AND stored_playlist.title IN ('Favorites', 'Liked Songs')
+          )
+       GROUP BY t.track_id, t.title, t.duration, t.bpm, g.name,
+                t.cover_image, t.preview_url
+       ORDER BY MIN(pt.position) ASC, t.track_id ASC;`,
+      [playlistId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('[DB Error in get playlist tracks]:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post(['/api/users/:userId/playlists', '/api/playlists'], async (req, res) => {
   const userId = req.params.userId || req.body.userId || 1;
   const { title } = req.body;
@@ -457,11 +514,43 @@ app.delete('/api/playlists/:playlistId/tracks/:trackId', async (req, res) => {
 app.post('/api/users/:userId/likes', async (req, res) => {
   const { userId } = req.params;
   const { trackId } = req.body;
+  if (trackId === undefined || trackId === null) {
+    return res.status(400).json({ error: 'trackId is required' });
+  }
   const strTrackId = String(trackId);
 
   try {
+    const existing = await pool.query(
+      `SELECT pt.playlist_id
+       FROM playlist_tracks pt
+       JOIN playlists p ON p.playlist_id = pt.playlist_id
+       WHERE p.user_id = $1
+         AND p.title IN ('Favorites', 'Liked Songs')
+         AND pt.track_id = $2
+       LIMIT 1;`,
+      [userId, strTrackId]
+    );
+
+    if (existing.rows.length > 0) {
+      await pool.query(
+        `DELETE FROM playlist_tracks pt
+         USING playlists p
+         WHERE pt.playlist_id = p.playlist_id
+           AND p.user_id = $1
+           AND p.title IN ('Favorites', 'Liked Songs')
+           AND pt.track_id = $2;`,
+        [userId, strTrackId]
+      );
+      console.log(`[DB] User ${userId} unliked track "${strTrackId}"`);
+      return res.json({ success: true, trackId: strTrackId, isLiked: false });
+    }
+
     let plRes = await pool.query(
-      `SELECT playlist_id FROM playlists WHERE user_id = $1 AND title IN ('Favorites', 'Liked Songs') LIMIT 1;`,
+      `SELECT playlist_id
+       FROM playlists
+       WHERE user_id = $1 AND title IN ('Favorites', 'Liked Songs')
+       ORDER BY CASE WHEN title = 'Favorites' THEN 0 ELSE 1 END, playlist_id ASC
+       LIMIT 1;`,
       [userId]
     );
     let playlistId = plRes.rows[0]?.playlist_id;
@@ -474,29 +563,14 @@ app.post('/api/users/:userId/likes', async (req, res) => {
       playlistId = created.rows[0].playlist_id;
     }
 
-    const exists = await pool.query(
-      `SELECT * FROM playlist_tracks WHERE playlist_id = $1 AND track_id = $2;`,
+    await pool.query(
+      `INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at)
+       VALUES ($1, $2, (SELECT COALESCE(MAX(position),0)+1 FROM playlist_tracks WHERE playlist_id = $1), NOW())
+       ON CONFLICT (playlist_id, track_id) DO NOTHING;`,
       [playlistId, strTrackId]
     );
-
-    let isLiked = false;
-    if (exists.rows.length > 0) {
-      await pool.query(
-        `DELETE FROM playlist_tracks WHERE playlist_id = $1 AND track_id = $2;`,
-        [playlistId, strTrackId]
-      );
-      isLiked = false;
-    } else {
-      await pool.query(
-        `INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at)
-         VALUES ($1, $2, (SELECT COALESCE(MAX(position),0)+1 FROM playlist_tracks WHERE playlist_id = $1), NOW());`,
-        [playlistId, strTrackId]
-      );
-      isLiked = true;
-    }
-
-    console.log(`[DB] User ${userId} ${isLiked ? 'liked' : 'unliked'} track "${strTrackId}" in playlist ${playlistId}`);
-    res.json({ success: true, trackId: strTrackId, isLiked });
+    console.log(`[DB] User ${userId} liked track "${strTrackId}" in playlist ${playlistId}`);
+    res.json({ success: true, trackId: strTrackId, isLiked: true });
   } catch (err) {
     console.error('[DB Error in toggle like]:', err.message);
     res.status(500).json({ error: err.message });

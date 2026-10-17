@@ -359,7 +359,7 @@ class RelationalDatabaseEngine {
     }
 
     // 3. Insert Track (Preserve numeric ID from PostgreSQL if present)
-    const numId = parseInt(song.id, 10);
+    const numId = /^\d+$/.test(song.id) ? parseInt(song.id, 10) : NaN;
     const existing = this.tracks.find(
       (t) => t.code === song.id || (!isNaN(numId) && numId > 0 && t.track_id === numId)
     );
