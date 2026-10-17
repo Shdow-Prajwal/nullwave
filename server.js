@@ -1,11 +1,11 @@
-// server.js - Precise PostgreSQL + pgvector bridge matching exact schema
+// server.js - Precise PostgreSQL + pgvector bridge with live iTunes enrichment
 import express from 'express';
 import cors from 'cors';
 import pg from 'pg';
 
 const { Pool } = pg;
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 5000;
 
 // ── Database Configuration ──────────────────────────────────────────────
 const DATABASE_URL =
@@ -27,6 +27,32 @@ app.use(express.json());
 function toPgVector(arr) {
   if (typeof arr === 'string') return arr;
   return `[${arr.join(',')}]`;
+}
+
+// Helper: Fetch missing album artwork and 30s audio preview URL from iTunes API
+async function fetchiTunesMetadata(title, artist) {
+  try {
+    const cleanTitle = title ? title.replace(/\(.*?\)|\[.*?\]/g, '').trim() : '';
+    const cleanArtist = (artist && artist !== 'Unknown Artist') ? artist.trim() : '';
+    const queryTerm = cleanArtist ? `${cleanTitle} ${cleanArtist}` : cleanTitle;
+
+    const query = encodeURIComponent(queryTerm);
+    const res = await fetch(`https://itunes.apple.com/search?term=${query}&entity=song&limit=1`);
+    if (!res.ok) return null;
+    const data = await res.json();
+
+    if (data.results && data.results.length > 0) {
+      const match = data.results[0];
+      return {
+        coverImage: match.artworkUrl100 ? match.artworkUrl100.replace('100x100bb', '600x600bb') : null,
+        previewUrl: match.previewUrl || null,
+        artistName: match.artistName || null,
+      };
+    }
+  } catch (err) {
+    console.warn(`[iTunes Search] Lookup error for ${title}:`, err.message);
+  }
+  return null;
 }
 
 // ── Root Diagnostic Route ──────────────────────────────────────────────
@@ -58,7 +84,6 @@ app.get('/api/health', async (req, res) => {
 });
 
 // ── 2. Users & Taste Vector ─────────────────────────────────────────────
-// Get all users
 app.get('/api/users', async (req, res) => {
   try {
     const result = await pool.query(
@@ -71,7 +96,6 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
-// Create new user (exact columns: username, email, created_at, taste_vector)
 app.post('/api/users', async (req, res) => {
   const {
     username,
@@ -94,7 +118,6 @@ app.post('/api/users', async (req, res) => {
 
     const newUser = result.rows[0];
 
-    // Auto-create default "Favorites" playlist for this user (exact columns: title, user_id, created_at)
     await pool.query(
       `INSERT INTO playlists (title, user_id, created_at)
        VALUES ('Favorites', $1, NOW());`,
@@ -109,7 +132,6 @@ app.post('/api/users', async (req, res) => {
   }
 });
 
-// Update a user's 8D taste vector in PostgreSQL
 app.put('/api/users/:userId/taste-vector', async (req, res) => {
   const { userId } = req.params;
   const { tasteVector } = req.body;
@@ -139,6 +161,7 @@ app.put('/api/users/:userId/taste-vector', async (req, res) => {
 });
 
 // ── 3. pgvector Acoustic Recommendations ────────────────────────────────
+// POST /api/recommendations - Fixed artist aggregation and iTunes metadata enrichment
 app.post('/api/recommendations', async (req, res) => {
   const { vector, limit = 12, genre = null } = req.body;
 
@@ -156,8 +179,10 @@ app.post('/api/recommendations', async (req, res) => {
         t.title,
         t.duration,
         t.bpm,
-        g.name AS genre,
-        COALESCE(a.name, 'Unknown Artist') AS artist,
+        COALESCE(g.name, 'Nu-Disco / Pop') AS genre,
+        COALESCE(STRING_AGG(a.name, ', '), 'Unknown Artist') AS artist,
+        t.cover_image,
+        t.preview_url,
         af.feature_vector::text AS feature_vector,
         (af.feature_vector <=> $1::vector) AS distance,
         ROUND((1 - (af.feature_vector <=> $1::vector))::numeric, 4) AS similarity
@@ -176,15 +201,37 @@ app.post('/api/recommendations', async (req, res) => {
     }
 
     params.push(limit);
-    query += ` ORDER BY af.feature_vector <=> $1::vector ASC LIMIT $${params.length};`;
+    query += `
+      GROUP BY t.track_id, t.title, t.duration, t.bpm, g.name, t.cover_image, t.preview_url, af.feature_vector
+      ORDER BY af.feature_vector <=> $1::vector ASC 
+      LIMIT $${params.length};
+    `;
 
     const result = await pool.query(query, params);
+
+    // Enrich recommendations with iTunes metadata if artist or cover image is missing
+    const enrichedRecommendations = await Promise.all(
+      result.rows.map(async (row) => {
+        if (!row.cover_image || !row.preview_url || row.artist === 'Unknown Artist') {
+          const iTunesData = await fetchiTunesMetadata(row.title, row.artist);
+          if (iTunesData) {
+            row.cover_image = row.cover_image || iTunesData.coverImage;
+            row.preview_url = row.preview_url || iTunesData.previewUrl;
+            if (row.artist === 'Unknown Artist' && iTunesData.artistName) {
+              row.artist = iTunesData.artistName;
+            }
+          }
+        }
+        return row;
+      })
+    );
+
     const executionTimeMs = Date.now() - startTime;
 
     res.json({
-      count: result.rows.length,
+      count: enrichedRecommendations.length,
       executionTimeMs,
-      recommendations: result.rows,
+      recommendations: enrichedRecommendations,
     });
   } catch (err) {
     console.error('[DB Error in recommendations]:', err.message);
@@ -193,16 +240,20 @@ app.post('/api/recommendations', async (req, res) => {
 });
 
 // ── 4. Tracks & Audio Features ──────────────────────────────────────────
+// Consolidated GET /api/tracks with artist aggregation and live iTunes metadata enrichment
 app.get('/api/tracks', async (req, res) => {
   try {
+    const limit = parseInt(req.query.limit, 10) || 100;
     const query = `
       SELECT 
         t.track_id,
         t.title,
         t.duration,
         t.bpm,
-        g.name AS genre,
-        COALESCE(a.name, 'Unknown Artist') AS artist,
+        COALESCE(g.name, 'Nu-Disco / Pop') AS genre,
+        COALESCE(STRING_AGG(a.name, ', '), 'Unknown Artist') AS artist,
+        t.cover_image,
+        t.preview_url,
         af.energy,
         af.danceability,
         af.valence,
@@ -217,10 +268,32 @@ app.get('/api/tracks', async (req, res) => {
       LEFT JOIN performs p ON t.track_id = p.track_id
       LEFT JOIN artist a ON p.artist_id = a.artist_id
       LEFT JOIN genre g ON t.genre_id = g.genre_id
-      ORDER BY t.track_id ASC;
+      GROUP BY t.track_id, t.title, t.duration, t.bpm, g.name, t.cover_image, t.preview_url,
+               af.energy, af.danceability, af.valence, af.acousticness, af.instrumentalness,
+               af.liveness, af.speechiness, af.tempo_norm, af.feature_vector
+      ORDER BY t.track_id ASC
+      LIMIT $1;
     `;
-    const result = await pool.query(query);
-    res.json(result.rows);
+    const { rows } = await pool.query(query, [limit]);
+
+    // Async enrichment for tracks missing artwork, audio previews, or artist names
+    const enrichedRows = await Promise.all(
+      rows.map(async (row) => {
+        if (!row.cover_image || !row.preview_url || row.artist === 'Unknown Artist') {
+          const iTunesData = await fetchiTunesMetadata(row.title, row.artist);
+          if (iTunesData) {
+            row.cover_image = row.cover_image || iTunesData.coverImage;
+            row.preview_url = row.preview_url || iTunesData.previewUrl;
+            if (row.artist === 'Unknown Artist' && iTunesData.artistName) {
+              row.artist = iTunesData.artistName;
+            }
+          }
+        }
+        return row;
+      })
+    );
+
+    res.json(enrichedRows);
   } catch (err) {
     console.error('[DB Error in get tracks]:', err.message);
     res.status(500).json({ error: err.message });
@@ -230,11 +303,14 @@ app.get('/api/tracks', async (req, res) => {
 // Insert new track, artist, performs junction, and audio features
 app.post('/api/tracks', async (req, res) => {
   const {
+    trackId: customTrackId,
     title,
     artistName = 'Unknown Artist',
     genreId = 1,
     duration = 180,
     bpm = 120,
+    coverImage,
+    previewUrl,
     features,
     vector = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
   } = req.body;
@@ -243,15 +319,15 @@ app.post('/api/tracks', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // 1. Insert Track (exact columns: title, duration, bpm, genre_id)
-    const trackRes = await client.query(
-      `INSERT INTO tracks (title, duration, bpm, genre_id)
-       VALUES ($1, $2, $3, $4) RETURNING track_id;`,
-      [title, duration, bpm, genreId]
+    const trackId = customTrackId || `tr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    await client.query(
+      `INSERT INTO tracks (track_id, title, duration, bpm, genre_id, cover_image, preview_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (track_id) DO UPDATE 
+       SET cover_image = EXCLUDED.cover_image, preview_url = EXCLUDED.preview_url;`,
+      [trackId, title, duration, bpm, genreId, coverImage || null, previewUrl || null]
     );
-    const trackId = trackRes.rows[0].track_id;
 
-    // 2. Insert or find Artist
     let artistId;
     const findArtist = await client.query('SELECT artist_id FROM artist WHERE name = $1;', [artistName]);
     if (findArtist.rows.length > 0) {
@@ -261,19 +337,17 @@ app.post('/api/tracks', async (req, res) => {
       artistId = artRes.rows[0].artist_id;
     }
 
-    // 3. Insert Performs junction
-    await client.query('INSERT INTO performs (artist_id, track_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING;', [
-      artistId,
-      trackId,
-      'main',
-    ]);
+    await client.query(
+      'INSERT INTO performs (artist_id, track_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING;',
+      [artistId, trackId, 'main']
+    );
 
-    // 4. Insert Audio Features & Vector
     const vectorStr = toPgVector(vector);
     await client.query(
       `INSERT INTO audio_features (
         track_id, energy, danceability, valence, acousticness, instrumentalness, liveness, speechiness, tempo_norm, feature_vector
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::vector);`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::vector)
+      ON CONFLICT (track_id) DO NOTHING;`,
       [
         trackId,
         features?.energy ?? 0.5,
@@ -289,7 +363,7 @@ app.post('/api/tracks', async (req, res) => {
     );
 
     await client.query('COMMIT');
-    console.log(`[DB] Inserted track "${title}" (ID: ${trackId}) with 8D audio features vector`);
+    console.log(`[DB] Inserted track "${title}" (ID: ${trackId}) with 8D vector and media assets`);
     res.status(201).json({ success: true, trackId, message: 'Track and vector added to database' });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -301,7 +375,6 @@ app.post('/api/tracks', async (req, res) => {
 });
 
 // ── 5. Playlists & Playlist Tracks ──────────────────────────────────────
-// Exact columns: playlist_id, title, user_id, created_at
 app.get('/api/users/:userId/playlists', async (req, res) => {
   const { userId } = req.params;
   try {
@@ -321,7 +394,6 @@ app.get('/api/users/:userId/playlists', async (req, res) => {
   }
 });
 
-// Create new playlist (exact columns: title, user_id, created_at)
 app.post(['/api/users/:userId/playlists', '/api/playlists'], async (req, res) => {
   const userId = req.params.userId || req.body.userId || 1;
   const { title } = req.body;
@@ -342,12 +414,9 @@ app.post(['/api/users/:userId/playlists', '/api/playlists'], async (req, res) =>
   }
 });
 
-// Add track to playlist (exact columns: playlist_id, track_id, position, added_at)
-// Automatically fires the trg_playlist_tracks_taste_update trigger in PostgreSQL!
 app.post('/api/playlists/:playlistId/tracks', async (req, res) => {
   const { playlistId } = req.params;
   const { trackId } = req.body;
-  const numTrackId = parseInt(String(trackId).replace(/\D/g, '') || trackId, 10) || 1;
 
   try {
     const posRes = await pool.query(
@@ -360,26 +429,24 @@ app.post('/api/playlists/:playlistId/tracks', async (req, res) => {
       `INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at)
        VALUES ($1, $2, $3, NOW())
        ON CONFLICT (playlist_id, track_id) DO NOTHING;`,
-      [playlistId, numTrackId, position]
+      [playlistId, String(trackId), position]
     );
-    console.log(`[DB Trigger Alert] Added track ${numTrackId} to playlist ${playlistId}. Trigger trg_playlist_tracks_taste_update fired!`);
-    res.json({ success: true, playlistId: Number(playlistId), trackId: numTrackId, position });
+    console.log(`[DB] Added track "${trackId}" to playlist ${playlistId}`);
+    res.json({ success: true, playlistId: Number(playlistId), trackId, position });
   } catch (err) {
     console.error('[DB Error in add track to playlist]:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Remove track from playlist
 app.delete('/api/playlists/:playlistId/tracks/:trackId', async (req, res) => {
   const { playlistId, trackId } = req.params;
-  const numTrackId = parseInt(String(trackId).replace(/\D/g, '') || trackId, 10) || 1;
   try {
     await pool.query(
       'DELETE FROM playlist_tracks WHERE playlist_id = $1 AND track_id = $2;',
-      [playlistId, numTrackId]
+      [playlistId, String(trackId)]
     );
-    console.log(`[DB] Removed track ${numTrackId} from playlist ${playlistId}`);
+    console.log(`[DB] Removed track "${trackId}" from playlist ${playlistId}`);
     res.json({ success: true, message: 'Track removed from playlist' });
   } catch (err) {
     console.error('[DB Error in remove track]:', err.message);
@@ -387,14 +454,12 @@ app.delete('/api/playlists/:playlistId/tracks/:trackId', async (req, res) => {
   }
 });
 
-// Toggle Likes (Syncs to Favorites playlist)
 app.post('/api/users/:userId/likes', async (req, res) => {
   const { userId } = req.params;
   const { trackId } = req.body;
-  const numTrackId = parseInt(String(trackId).replace(/\D/g, '') || trackId, 10) || 1;
+  const strTrackId = String(trackId);
 
   try {
-    // 1. Find or create Favorites playlist
     let plRes = await pool.query(
       `SELECT playlist_id FROM playlists WHERE user_id = $1 AND title IN ('Favorites', 'Liked Songs') LIMIT 1;`,
       [userId]
@@ -409,49 +474,48 @@ app.post('/api/users/:userId/likes', async (req, res) => {
       playlistId = created.rows[0].playlist_id;
     }
 
-    // 2. Check if track already liked
     const exists = await pool.query(
       `SELECT * FROM playlist_tracks WHERE playlist_id = $1 AND track_id = $2;`,
-      [playlistId, numTrackId]
+      [playlistId, strTrackId]
     );
 
     let isLiked = false;
     if (exists.rows.length > 0) {
       await pool.query(
         `DELETE FROM playlist_tracks WHERE playlist_id = $1 AND track_id = $2;`,
-        [playlistId, numTrackId]
+        [playlistId, strTrackId]
       );
       isLiked = false;
     } else {
       await pool.query(
         `INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at)
          VALUES ($1, $2, (SELECT COALESCE(MAX(position),0)+1 FROM playlist_tracks WHERE playlist_id = $1), NOW());`,
-        [playlistId, numTrackId]
+        [playlistId, strTrackId]
       );
       isLiked = true;
     }
 
-    console.log(`[DB] User ${userId} ${isLiked ? 'liked' : 'unliked'} track ${numTrackId} in playlist ${playlistId}`);
-    res.json({ success: true, trackId: numTrackId, isLiked });
+    console.log(`[DB] User ${userId} ${isLiked ? 'liked' : 'unliked'} track "${strTrackId}" in playlist ${playlistId}`);
+    res.json({ success: true, trackId: strTrackId, isLiked });
   } catch (err) {
     console.error('[DB Error in toggle like]:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── 6. Listen History (Exact columns: history_id, user_id, track_id, last_played, rating) ──
+// ── 6. Listen History ──────────────────────────────────────────────────
 app.post('/api/listen-history', async (req, res) => {
   const { userId, trackId, rating = 4 } = req.body;
-  const numTrackId = parseInt(String(trackId).replace(/\D/g, '') || trackId, 10) || 1;
+  const strTrackId = String(trackId);
 
   try {
     const result = await pool.query(
       `INSERT INTO listen_history (user_id, track_id, last_played, rating)
        VALUES ($1, $2, NOW(), $3)
        RETURNING history_id, user_id, track_id, last_played, rating;`,
-      [userId || 1, numTrackId, rating]
+      [userId || 1, strTrackId, rating]
     );
-    console.log(`[DB] Inserted listen session into listen_history (user_id: ${userId || 1}, track_id: ${numTrackId}, last_played: NOW(), rating: ${rating})`);
+    console.log(`[DB] Inserted listen session (user_id: ${userId || 1}, track_id: "${strTrackId}", rating: ${rating})`);
     res.json({ success: true, historyRecord: result.rows[0] });
   } catch (err) {
     console.error('[DB Error in listen history]:', err.message);
@@ -464,13 +528,15 @@ app.get('/api/users/:userId/listen-history', async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT lh.history_id, lh.user_id, lh.track_id, lh.last_played, lh.rating,
-              t.title, t.bpm, t.duration, a.name AS artist, g.name AS genre
+              t.title, t.bpm, t.duration, COALESCE(STRING_AGG(a.name, ', '), 'Unknown Artist') AS artist, g.name AS genre,
+              t.cover_image, t.preview_url
        FROM listen_history lh
        JOIN tracks t ON lh.track_id = t.track_id
        LEFT JOIN performs p ON t.track_id = p.track_id
        LEFT JOIN artist a ON p.artist_id = a.artist_id
        LEFT JOIN genre g ON t.genre_id = g.genre_id
        WHERE lh.user_id = $1
+       GROUP BY lh.history_id, lh.user_id, lh.track_id, lh.last_played, lh.rating, t.title, t.bpm, t.duration, g.name, t.cover_image, t.preview_url
        ORDER BY lh.last_played DESC
        LIMIT 50;`,
       [userId]

@@ -1,3 +1,4 @@
+// src/services/spotifySearchService.ts
 import { MusicGenre, Song, MusicVector } from '../types/music';
 import { bpmToNormalized } from './vectorDb/vectorMath';
 
@@ -151,6 +152,14 @@ function estimateVectorFromTrack(genre: MusicGenre, bpm: number): MusicVector {
 
 export class SpotifySearchService {
   /**
+   * Transforms raw iTunes thumbnail URLs to 600x600 high-resolution artwork
+   */
+  private formatCoverImage(rawUrl?: string): string {
+    if (!rawUrl) return '';
+    return rawUrl.replace(/\d+x\d+bb/g, '600x600bb');
+  }
+
+  /**
    * Search real songs via global music catalogue API
    */
   public async searchTracks(query: string, limit: number = 8): Promise<SpotifySearchResultItem[]> {
@@ -192,9 +201,7 @@ export class SpotifySearchService {
           : 2022;
         const genre = mapGenre(item.primaryGenreName);
         const previewUrl = item.previewUrl || '';
-        const coverImage = item.artworkUrl100
-          ? item.artworkUrl100.replace('100x100bb.jpg', '600x600bb.jpg')
-          : '';
+        const coverImage = this.formatCoverImage(item.artworkUrl100);
         const durationSeconds = item.trackTimeMillis
           ? Math.round(item.trackTimeMillis / 1000)
           : 210;
@@ -227,7 +234,7 @@ export class SpotifySearchService {
           coverImage,
           previewUrl,
           spotifyId,
-          spotifyUrl: `https://open.spotify.com/search/${encodeURIComponent(`${artist} ${title}`)}`,
+          spotifyUrl: `https://open.spotify.com/search/${encodeURIComponent(`${artist}${title}`)}`,
           audioFeatures: {
             danceability: vector.danceability,
             energy: vector.energy,
@@ -243,6 +250,33 @@ export class SpotifySearchService {
       console.error('Failed to search real songs:', err);
       return [];
     }
+  }
+
+  /**
+   * Fetches metadata for a single track title and optional artist
+   */
+  public async fetchSingleTrackMetadata(
+    title: string,
+    artist?: string
+  ): Promise<{ coverImage: string; previewUrl: string; artistName: string } | null> {
+    try {
+      const cleanTitle = title.replace(/\(.*?\)|\[.*?\]/g, '').trim();
+      const cleanArtist = artist && artist !== 'Unknown Artist' ? artist.trim() : '';
+      const searchTerm = cleanArtist ? `${cleanTitle} ${cleanArtist}` : cleanTitle;
+
+      const results = await this.searchTracks(searchTerm, 1);
+      if (results.length > 0) {
+        const match = results[0]!;
+        return {
+          coverImage: match.coverImage,
+          previewUrl: match.previewUrl,
+          artistName: match.artist,
+        };
+      }
+    } catch (err) {
+      console.warn(`[iTunes Metadata Lookup Error] for ${title}:`, err);
+    }
+    return null;
   }
 
   /**

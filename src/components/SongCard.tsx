@@ -1,4 +1,5 @@
-import React from 'react';
+// src/components/SongCard.tsx
+import React, { useState } from 'react';
 import { Heart, Play, Pause, Activity, Disc, Sparkles, Music, Radio, ListPlus } from 'lucide-react';
 import { Song, RecommendationResult } from '../types/music';
 import { GENRE_THEMES } from '../data/mockCatalog';
@@ -28,9 +29,12 @@ export const SongCard: React.FC<SongCardProps> = ({
   onOpenSpotify,
   onAddToPlaylist,
 }) => {
+  const [imgError, setImgError] = useState<boolean>(false);
   const genreTheme = GENRE_THEMES[song.genre] || GENRE_THEMES.Synthwave;
   const matchPercent = recommendation ? Math.round(recommendation.similarityScore * 100) : null;
   const isRealPreview = !!song.previewUrl;
+
+  const showCoverImage = !!song.coverImage && !imgError;
 
   return (
     <div
@@ -83,16 +87,17 @@ export const SongCard: React.FC<SongCardProps> = ({
 
         {/* Real Album Cover Artwork & Play Overlay */}
         <div className="relative aspect-square rounded-xl overflow-hidden mb-3 bg-black/40 border border-white/10">
-          {song.coverImage ? (
+          {showCoverImage ? (
             <img
               src={song.coverImage}
               alt={song.title}
+              onError={() => setImgError(true)}
               className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
               loading="lazy"
             />
           ) : (
             <div
-              className={`w-full h-full bg-gradient-to-tr ${song.coverGradient} opacity-90 transition-transform duration-500 group-hover:scale-105 flex items-center justify-center`}
+              className={`w-full h-full bg-gradient-to-tr ${song.coverGradient || 'from-violet-900 to-indigo-950'} opacity-90 transition-transform duration-500 group-hover:scale-105 flex items-center justify-center`}
             >
               <Disc
                 className={`w-20 h-20 text-white/20 transition-all duration-700 ${
@@ -106,7 +111,7 @@ export const SongCard: React.FC<SongCardProps> = ({
           {/* Quick Play/Pause Center Button Overlay */}
           <button
             onClick={() => onPlayToggle(song)}
-            className={`absolute inset-0 m-auto w-13 h-13 rounded-full flex items-center justify-center transition-all duration-200 shadow-2xl backdrop-blur-md ${
+            className={`absolute inset-0 m-auto w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-2xl backdrop-blur-md ${
               isCurrentSong && isPlaying
                 ? 'bg-violet-600 text-white scale-100 opacity-100 ring-4 ring-violet-500/30'
                 : 'bg-black/70 text-white opacity-0 group-hover:opacity-100 hover:scale-110 hover:bg-white hover:text-black border border-white/20'
@@ -141,7 +146,7 @@ export const SongCard: React.FC<SongCardProps> = ({
             {song.title}
           </h3>
           <p className="text-xs text-white/60 line-clamp-1 mt-0.5">{song.artist}</p>
-          <p className="text-[11px] text-white/40 line-clamp-1 italic">{song.album}</p>
+          <p className="text-[11px] text-white/40 line-clamp-1 italic">{song.album || 'Single'}</p>
         </div>
 
         {/* Vector Match Reason (if recommendation present) */}
@@ -158,13 +163,13 @@ export const SongCard: React.FC<SongCardProps> = ({
             <div className="flex justify-between text-white/50 mb-0.5">
               <span>DNC</span>
               <span className="font-mono text-white/70">
-                {Math.round(song.vector.danceability * 100)}%
+                {Math.round((song.vector?.danceability || 0.5) * 100)}%
               </span>
             </div>
             <div className="h-1 rounded-full bg-white/10 overflow-hidden">
               <div
                 className="h-full bg-pink-400 transition-all duration-500"
-                style={{ width: `${song.vector.danceability * 100}%` }}
+                style={{ width: `${(song.vector?.danceability || 0.5) * 100}%` }}
               />
             </div>
           </div>
@@ -173,13 +178,13 @@ export const SongCard: React.FC<SongCardProps> = ({
             <div className="flex justify-between text-white/50 mb-0.5">
               <span>NRG</span>
               <span className="font-mono text-white/70">
-                {Math.round(song.vector.energy * 100)}%
+                {Math.round((song.vector?.energy || 0.5) * 100)}%
               </span>
             </div>
             <div className="h-1 rounded-full bg-white/10 overflow-hidden">
               <div
                 className="h-full bg-amber-400 transition-all duration-500"
-                style={{ width: `${song.vector.energy * 100}%` }}
+                style={{ width: `${(song.vector?.energy || 0.5) * 100}%` }}
               />
             </div>
           </div>
@@ -188,13 +193,13 @@ export const SongCard: React.FC<SongCardProps> = ({
             <div className="flex justify-between text-white/50 mb-0.5">
               <span>VAL</span>
               <span className="font-mono text-white/70">
-                {Math.round(song.vector.valence * 100)}%
+                {Math.round((song.vector?.valence || 0.5) * 100)}%
               </span>
             </div>
             <div className="h-1 rounded-full bg-white/10 overflow-hidden">
               <div
                 className="h-full bg-emerald-400 transition-all duration-500"
-                style={{ width: `${song.vector.valence * 100}%` }}
+                style={{ width: `${(song.vector?.valence || 0.5) * 100}%` }}
               />
             </div>
           </div>
@@ -203,13 +208,13 @@ export const SongCard: React.FC<SongCardProps> = ({
             <div className="flex justify-between text-white/50 mb-0.5">
               <span>VIBE</span>
               <span className="font-mono text-white/70">
-                {Math.round(song.vector.vibeChillToHype * 100)}%
+                {Math.round((song.vector?.vibeChillToHype || 0.5) * 100)}%
               </span>
             </div>
             <div className="h-1 rounded-full bg-white/10 overflow-hidden">
               <div
                 className="h-full bg-violet-400 transition-all duration-500"
-                style={{ width: `${song.vector.vibeChillToHype * 100}%` }}
+                style={{ width: `${(song.vector?.vibeChillToHype || 0.5) * 100}%` }}
               />
             </div>
           </div>

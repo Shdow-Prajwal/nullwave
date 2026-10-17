@@ -1,3 +1,4 @@
+// src/services/audioSynthesizer.ts
 import { Song } from '../types/music';
 
 class AudioSynthesizerService {
@@ -34,7 +35,7 @@ class AudioSynthesizerService {
       this.masterGain.gain.value = this.volume;
 
       this.analyser = this.ctx.createAnalyser();
-      this.analyser.fftSize = 64;
+      this.analyser.fftSize = 128; // 64 frequency bands
       this.analyser.smoothingTimeConstant = 0.8;
 
       this.masterGain.connect(this.analyser);
@@ -67,8 +68,8 @@ class AudioSynthesizerService {
   }
 
   /**
-   * Play a song. If previewUrl is available, plays the real audio stream.
-   * If previewUrl is absent or fails, falls back gracefully to procedural synthesis.
+   * Play a song. If previewUrl is available, plays the real audio stream via HTML5 Audio + Web Audio API.
+   * If previewUrl is absent or fails, falls back gracefully to procedural synth.
    */
   public playSong(song: Song) {
     this.initContext();
@@ -94,14 +95,12 @@ class AudioSynthesizerService {
 
       // Connect HTML5 Audio into Web Audio Analyser if supported
       try {
-        if (this.ctx && this.analyser && !this.mediaSourceConnected) {
+        if (this.ctx && this.masterGain && !this.mediaSourceConnected) {
           const source = this.ctx.createMediaElementSource(this.audioElement);
-          source.connect(this.analyser);
+          source.connect(this.masterGain);
           this.mediaSourceConnected = true;
         }
       } catch (e) {
-        // Some browser security rules prevent cross-origin media element source
-        // In that case audio still plays cleanly via default output
         console.warn('Media element source connection skipped:', e);
       }
 
@@ -114,6 +113,8 @@ class AudioSynthesizerService {
       });
 
       this.audioElement.addEventListener('ended', () => {
+        this.isPlaying = false;
+        this.isPlayingRealAudio = false;
         this.onEndedListeners.forEach((cb) => cb());
       });
 
@@ -131,7 +132,7 @@ class AudioSynthesizerService {
     this.audioElement.currentTime = 0;
 
     this.audioElement.play().catch((err) => {
-      console.warn('Autoplay prevented or stream failed, falling back:', err);
+      console.warn('Autoplay prevented or stream failed, falling back to synthesizer:', err);
       this.isPlayingRealAudio = false;
       this.playProceduralSynth(song);
     });
@@ -244,7 +245,6 @@ class AudioSynthesizerService {
     const root = config.rootFreq;
     const scale = config.scale && config.scale.length > 0 ? config.scale : [0, 3, 7, 10];
 
-    // Procedural rhythm & note patterns
     switch (config.synthType) {
       case 'synthwave':
         if (step % 2 === 0) {
@@ -454,14 +454,14 @@ class AudioSynthesizerService {
         const buffer = new Uint8Array(this.analyser.frequencyBinCount);
         this.analyser.getByteFrequencyData(buffer);
 
-        // If playing real audio preview and buffer is completely silent (due to strict CORS in some iframes),
+        // If playing real audio preview and buffer is completely silent (due to strict CORS in some browser environments),
         // simulate natural rhythmic frequency pulses matching the song's energy & tempo
         const hasSignal = buffer.some((v) => v > 0);
         if (!hasSignal && this.isPlaying) {
           const time = performance.now() / 1000;
           const bpm = this.currentSong?.bpm || 120;
           const beatFreq = (bpm / 60) * Math.PI * 2;
-          const energy = this.currentSong?.vector.energy || 0.6;
+          const energy = this.currentSong?.vector?.energy || 0.6;
           for (let i = 0; i < buffer.length; i++) {
             const wave = Math.sin(time * beatFreq + i * 0.4);
             buffer[i] = Math.floor(Math.max(40, (wave * 0.5 + 0.5) * 200 * energy));
