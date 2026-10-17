@@ -174,8 +174,9 @@ export default function App() {
   // Landing / Splash screen state
   const [showLandingPage, setShowLandingPage] = useState<boolean>(true);
 
-  // Active Relational Database User
+  // Active Relational Database User & All Users List
   const [activeUser, setActiveUser] = useState<UserDbRecord | null>(null);
+  const [allUsers, setAllUsers] = useState<UserDbRecord[]>(() => userDbService.getAllUsers());
 
   // Dynamic Catalog State (Populated directly from PostgreSQL DB container)
   const [catalog, setCatalog] = useState<Song[]>([]);
@@ -218,21 +219,32 @@ export default function App() {
   const [newUserName, setNewUserName] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
 
-  // 1. Initialize active user from PostgreSQL Backend
+  // 1. Initialize active user and all users from PostgreSQL Backend
   useEffect(() => {
     async function loadInitialUsers() {
       try {
         const res = await fetch(`${API_BASE_URL}/users`);
         if (res.ok) {
-          const users = await res.json();
-          if (Array.isArray(users) && users.length > 0) {
-            const first = users[0];
-            setActiveUser(first);
-            if (first.taste_vector) {
-              const parsed = typeof first.taste_vector === 'string'
-                ? JSON.parse(first.taste_vector)
-                : first.taste_vector;
-              setTargetVector(arrayToMusicVector(parsed));
+          const rawUsers = await res.json();
+          if (Array.isArray(rawUsers) && rawUsers.length > 0) {
+            const mappedUsers: UserDbRecord[] = rawUsers.map((u: any) => ({
+              user_id: Number(u.user_id),
+              username: u.username || `User #${u.user_id}`,
+              email: u.email || `${(u.username || 'user').toLowerCase().replace(/[^a-z0-9]/g, '')}@vectorvibe.local`,
+              created_at: u.created_at || new Date().toISOString(),
+              taste_vector:
+                typeof u.taste_vector === 'string'
+                  ? JSON.parse(u.taste_vector)
+                  : Array.isArray(u.taste_vector)
+                  ? u.taste_vector
+                  : DEFAULT_TASTE_VECTOR_ARRAY,
+            }));
+            setAllUsers(mappedUsers);
+            const activeId = userDbService.getActiveUserId();
+            const matched = (activeId && mappedUsers.find((u) => u.user_id === activeId)) || mappedUsers[0]!;
+            setActiveUser(matched);
+            if (matched.taste_vector && matched.taste_vector.length === 8) {
+              setTargetVector(arrayToMusicVector(matched.taste_vector));
             }
             return;
           }
@@ -241,20 +253,19 @@ export default function App() {
         console.warn('Backend server not reachable yet, using local user state:', err);
       }
 
+      const localUsers = userDbService.getAllUsers();
+      setAllUsers(localUsers);
       const current = userDbService.getActiveUser();
       if (current) {
         setActiveUser(current);
         if (current.taste_vector && current.taste_vector.length === 8) {
           setTargetVector(arrayToMusicVector(current.taste_vector));
         }
-      } else {
-        const all = userDbService.getAllUsers();
-        if (all.length > 0) {
-          const first = userDbService.setActiveUser(all[0]!.user_id);
-          setActiveUser(first);
-          if (first?.taste_vector) {
-            setTargetVector(arrayToMusicVector(first.taste_vector));
-          }
+      } else if (localUsers.length > 0) {
+        const first = userDbService.setActiveUser(localUsers[0]!.user_id);
+        setActiveUser(first);
+        if (first?.taste_vector) {
+          setTargetVector(arrayToMusicVector(first.taste_vector));
         }
       }
     }
@@ -264,6 +275,7 @@ export default function App() {
     const unsubscribe = userDbService.subscribe(() => {
       const updatedUser = userDbService.getActiveUser();
       setActiveUser(updatedUser);
+      setAllUsers(userDbService.getAllUsers());
     });
 
     return () => unsubscribe();
@@ -378,8 +390,22 @@ export default function App() {
         body: JSON.stringify({ username, email, tasteVector: vectorArr }),
       });
       if (res.ok) {
-        const created = await res.json();
+        const createdRaw = await res.json();
+        const created: UserDbRecord = {
+          user_id: Number(createdRaw.user_id),
+          username: createdRaw.username,
+          email: createdRaw.email || `${username.toLowerCase().replace(/[^a-z0-9]/g, '')}@vectorvibe.local`,
+          created_at: createdRaw.created_at || new Date().toISOString(),
+          taste_vector:
+            typeof createdRaw.taste_vector === 'string'
+              ? JSON.parse(createdRaw.taste_vector)
+              : Array.isArray(createdRaw.taste_vector)
+              ? createdRaw.taste_vector
+              : vectorArr,
+        };
+        userDbService.createUser(username, email, vectorArr);
         setActiveUser(created);
+        setAllUsers((prev) => [...prev.filter((u) => u.user_id !== created.user_id), created]);
         setShowLandingPage(false);
         return;
       }
@@ -389,17 +415,20 @@ export default function App() {
 
     const newUser = userDbService.createUser(username, email, vectorArr);
     setActiveUser(newUser);
+    setAllUsers(userDbService.getAllUsers());
     setShowLandingPage(false);
   };
 
   // Switch active user
   const handleSwitchUser = (userId: number) => {
-    const user = userDbService.setActiveUser(userId);
-    if (user) {
-      setActiveUser(user);
-      if (user.taste_vector && user.taste_vector.length === 8) {
-        setTargetVector(arrayToMusicVector(user.taste_vector));
+    const target = allUsers.find((u) => u.user_id === userId) || userDbService.setActiveUser(userId);
+    if (target) {
+      userDbService.setActiveUser(userId);
+      setActiveUser(target);
+      if (target.taste_vector && target.taste_vector.length === 8) {
+        setTargetVector(arrayToMusicVector(target.taste_vector));
       }
+      setLikedSongIds(relationalDbService.getLikedSongCodes(userId));
     }
   };
 
@@ -582,6 +611,8 @@ export default function App() {
       <>
         <LandingPage
           currentUser={activeUser}
+          allUsers={allUsers}
+          onSelectUser={handleSwitchUser}
           onLaunchMainApp={() => setShowLandingPage(false)}
           onCreateAndLaunchUser={handleCreateAndLaunchUser}
           onOpenArchitecture={() => setIsArchitectureModalOpen(true)}
@@ -631,6 +662,10 @@ export default function App() {
         <UserHeaderMenu
           user={displayUser}
           tasteProfile={userTasteProfile}
+          allUsers={allUsers}
+          onSwitchUser={handleSwitchUser}
+          likedSongsCount={likedSongIds.size}
+          playlistsCount={userDbService.getPlaylistsForUser(displayUser.user_id).length}
           onOpenTasteProfileModal={() => setIsTasteProfileModalOpen(true)}
           onOpenUserDetailsModal={() => setIsUserDetailsModalOpen(true)}
           onOpenSettingsModal={() => setIsSettingsModalOpen(true)}
