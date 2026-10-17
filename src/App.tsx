@@ -294,6 +294,7 @@ export default function App() {
             const mappedSongs = dbTracks.map(mapDbTrackToSong);
             setCatalog(mappedSongs);
             pgVectorService.setCatalog(mappedSongs);
+            relationalDbService.setCatalogReference(mappedSongs);
             setCurrentSong((prev) => (prev ? prev : mappedSongs[0]!));
             return;
           }
@@ -307,18 +308,63 @@ export default function App() {
         const songs = relationalDbService.getAllSongs();
         setCatalog(songs);
         pgVectorService.setCatalog(songs);
+        relationalDbService.setCatalogReference(songs);
         if (songs.length > 0) setCurrentSong((prev) => (prev ? prev : songs[0]!));
       }
     }
 
     loadCatalog();
 
-    const syncLikes = () => {
+    const syncLikesAndData = async () => {
       const uid = activeUser?.user_id || 1;
-      setLikedSongIds(relationalDbService.getLikedSongCodes(uid));
+      setLikedSongIds(new Set(relationalDbService.getLikedSongCodes(uid)));
+
+      // Fetch user's persistent listen history from PostgreSQL container
+      try {
+        const hRes = await fetch(`${API_BASE_URL}/users/${uid}/listen-history`);
+        if (hRes.ok) {
+          const dbHistory = await hRes.json();
+          if (Array.isArray(dbHistory) && dbHistory.length > 0 && isMounted) {
+            setHistory(
+              dbHistory.map((row: any) => ({
+                id: `hist-${row.history_id}`,
+                songId: String(row.track_id),
+                song: {
+                  id: String(row.track_id),
+                  title: row.title || `Track #${row.track_id}`,
+                  artist: row.artist || 'Unknown Artist',
+                  album: 'Single',
+                  genre: row.genre || 'Nu-Disco / Pop',
+                  bpm: row.bpm || 120,
+                  durationSeconds: row.duration || 210,
+                  coverImage: row.cover_image,
+                  previewUrl: row.preview_url,
+                  vector: {
+                    danceability: 0.8,
+                    energy: 0.8,
+                    valence: 0.6,
+                    beatsBpmNormalized: 0.5,
+                    vibeChillToHype: 0.7,
+                    acousticness: 0.1,
+                    instrumentalness: 0.5,
+                    moodHarmonics: 0.5,
+                  },
+                  tags: [row.genre || 'Pop'],
+                },
+                listenedAt: row.last_played || new Date().toISOString(),
+                completionPercent: 100,
+                userLiked: true,
+                contextVibe: row.genre || 'Acoustic',
+              }))
+            );
+          }
+        }
+      } catch {
+        // Fallback to local history
+      }
     };
-    syncLikes();
-    const unsub = relationalDbService.subscribe(syncLikes);
+    syncLikesAndData();
+    const unsub = relationalDbService.subscribe(syncLikesAndData);
     return () => {
       isMounted = false;
       unsub();

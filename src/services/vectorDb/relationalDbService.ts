@@ -358,8 +358,20 @@ class RelationalDatabaseEngine {
       }
     }
 
-    // 3. Insert Track
-    const nextTrackId = this.tracks.length > 0 ? Math.max(...this.tracks.map((t) => t.track_id)) + 1 : 1;
+    // 3. Insert Track (Preserve numeric ID from PostgreSQL if present)
+    const numId = parseInt(song.id, 10);
+    const existing = this.tracks.find(
+      (t) => t.code === song.id || (!isNaN(numId) && numId > 0 && t.track_id === numId)
+    );
+    if (existing) return existing;
+
+    const nextTrackId =
+      !isNaN(numId) && numId > 0
+        ? numId
+        : this.tracks.length > 0
+        ? Math.max(...this.tracks.map((t) => t.track_id)) + 1
+        : 1;
+
     const trackRow: TrackRow = {
       track_id: nextTrackId,
       code: song.id,
@@ -653,6 +665,21 @@ class RelationalDatabaseEngine {
 
     const result: Song[] = [];
     entries.forEach((entry) => {
+      // 1. Check in catalog reference first (the real tracks from PostgreSQL container)
+      if (this.catalogReference && this.catalogReference.length > 0) {
+        const cat = this.catalogReference.find(
+          (s) =>
+            s.id === String(entry.track_id) ||
+            s.id === `TRK-${entry.track_id}` ||
+            s.id === entry.track_id.toString()
+        );
+        if (cat) {
+          result.push(cat);
+          return;
+        }
+      }
+
+      // 2. Check internal trackRow
       const t = this.tracks.find((trk) => trk.track_id === entry.track_id);
       if (t) {
         const s = this.trackRowToSong(t);
@@ -668,13 +695,20 @@ class RelationalDatabaseEngine {
   public getLikedSongCodes(userId: number): Set<string> {
     const favPlaylist = this.getOrCreateLikedSongsPlaylist(userId);
     const likedTrackIds = new Set(
-      this.playlist_tracks.filter((pt) => pt.playlist_id === favPlaylist.playlist_id).map((pt) => pt.track_id)
+      this.playlist_tracks
+        .filter((pt) => pt.playlist_id === favPlaylist.playlist_id)
+        .map((pt) => pt.track_id)
     );
 
     const codes = new Set<string>();
+    likedTrackIds.forEach((tid) => {
+      codes.add(String(tid));
+      codes.add(`TRK-${tid}`);
+    });
     this.tracks.forEach((t) => {
       if (likedTrackIds.has(t.track_id)) {
         codes.add(t.code);
+        codes.add(t.track_id.toString());
       }
     });
     return codes;
@@ -1435,11 +1469,49 @@ SELECT 'Database setup complete!' AS status,
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
+  private catalogReference: Song[] = [];
+
+  public setCatalogReference(songs: Song[]): void {
+    this.catalogReference = songs;
+  }
+
+  public getCatalogReference(): Song[] {
+    return this.catalogReference;
+  }
+
   private resolveTrack(trackCodeOrId: string | number): TrackRow | null {
     if (typeof trackCodeOrId === 'number') {
-      return this.tracks.find((t) => t.track_id === trackCodeOrId) || null;
+      const match = this.tracks.find((t) => t.track_id === trackCodeOrId);
+      if (match) return match;
     }
-    return this.tracks.find((t) => t.code === trackCodeOrId || t.track_id.toString() === trackCodeOrId) || null;
+    const str = String(trackCodeOrId);
+    const byCodeOrId = this.tracks.find((t) => t.code === str || t.track_id.toString() === str);
+    if (byCodeOrId) return byCodeOrId;
+
+    // Check catalog reference (real tracks from PostgreSQL container)
+    if (this.catalogReference && this.catalogReference.length > 0) {
+      const catSong = this.catalogReference.find((s) => s.id === str);
+      if (catSong) {
+        return this.insertSongInternal(catSong, false);
+      }
+    }
+
+    // Auto-create a lightweight TrackRow if numeric ID from PostgreSQL
+    const num = Number(trackCodeOrId);
+    if (!isNaN(num) && num > 0) {
+      const newTrack: TrackRow = {
+        track_id: num,
+        code: str,
+        title: `Track #${num}`,
+        duration: 210,
+        bpm: 120,
+        genre_id: 1,
+      };
+      this.tracks.push(newTrack);
+      return newTrack;
+    }
+
+    return null;
   }
 
   private trackRowToSong(t: TrackRow): Song {
