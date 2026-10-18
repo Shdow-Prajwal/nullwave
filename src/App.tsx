@@ -54,9 +54,10 @@ import { SettingsModal } from './components/SettingsModal';
 import { PlaylistsView } from './components/PlaylistsView';
 import { AddToPlaylistModal } from './components/AddToPlaylistModal';
 import { relationalDbService } from './services/vectorDb/relationalDbService';
+import { spotifySearchService } from './services/spotifySearchService';
 
-// Backend API Base Endpoint
-const API_BASE_URL = 'http://localhost:5000/api';
+// Backend API Base Endpoint (routed via Vite proxy to PostgreSQL Express bridge)
+const API_BASE_URL = '/api';
 
 // Curated high-res artwork mapped by genre for fallback
 const GENRE_FALLBACK_IMAGES: Record<string, string> = {

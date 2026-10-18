@@ -150,6 +150,28 @@ function estimateVectorFromTrack(genre: MusicGenre, bpm: number): MusicVector {
   }
 }
 
+export function cleanTrackTitleAndArtist(title: string, artist?: string) {
+  let cleanArtist = String(artist || '')
+    .replace(/^\[['"]?|['"]?\]$/g, '') // remove python list brackets ['...']
+    .replace(/['"]+/g, '') // remove inner quotes
+    .split(/[,;&\/]|(?:\s+feat\.?\s+)/i)[0] // primary artist
+    .replace(/^\[+|\]+$/g, '')
+    .trim();
+
+  if (cleanArtist === 'Unknown Artist' || cleanArtist === 'Various Artists') {
+    cleanArtist = '';
+  }
+
+  let cleanTitle = String(title || '')
+    .replace(/\(.*?\)|\[.*?\]/g, '') // remove parentheses/brackets
+    .replace(/\s*-\s*.*(remaster|radio|live|single|deluxe|version|mono|stereo|bonus|mix).*$/i, '')
+    .replace(/\s+feat\..*$/i, '')
+    .replace(/['"“”]/g, '')
+    .trim();
+
+  return { cleanTitle: cleanTitle || String(title || '').trim(), cleanArtist };
+}
+
 export class SpotifySearchService {
   /**
    * Transforms raw iTunes thumbnail URLs to 600x600 high-resolution artwork
@@ -159,13 +181,100 @@ export class SpotifySearchService {
     return rawUrl.replace(/\d+x\d+bb/g, '600x600bb');
   }
 
-    /**
-   * Searches the full PostgreSQL tracks table through the Express bridge
+  /**
+   * Search real songs directly via Apple iTunes API
+   */
+  public async searchItunesDirect(term: string, limit: number = 8): Promise<SpotifySearchResultItem[]> {
+    try {
+      const url = `https://itunes.apple.com/search?term=${encodeURIComponent(
+        term.trim()
+      )}&media=music&entity=song&limit=${limit}`;
+
+      const res = await fetch(url);
+      if (!res.ok) return [];
+
+      const data = await res.json();
+      if (!data.results || !Array.isArray(data.results)) {
+        return [];
+      }
+
+      interface ITunesItem {
+        trackId?: number;
+        trackName?: string;
+        artistName?: string;
+        collectionName?: string;
+        releaseDate?: string;
+        primaryGenreName?: string;
+        previewUrl?: string;
+        artworkUrl100?: string;
+        trackTimeMillis?: number;
+      }
+
+      return data.results.map((item: ITunesItem, idx: number) => {
+        const title = item.trackName || 'Untitled Track';
+        const artist = item.artistName || 'Unknown Artist';
+        const album = item.collectionName || `${title} - Single`;
+        const releaseYear = item.releaseDate
+          ? parseInt(item.releaseDate.substring(0, 4), 10)
+          : 2022;
+        const genre = mapGenre(item.primaryGenreName);
+        const previewUrl = item.previewUrl || '';
+        const coverImage = this.formatCoverImage(item.artworkUrl100);
+        const durationSeconds = item.trackTimeMillis
+          ? Math.round(item.trackTimeMillis / 1000)
+          : 210;
+
+        const defaultBpmMap: Record<MusicGenre, number> = {
+          'Synthwave': 118,
+          'Cyber Techno': 128,
+          'Nu-Disco / Pop': 120,
+          'Lo-Fi Chill': 80,
+          'Indie Folk': 105,
+          'Neo-Soul / R&B': 92,
+          'Cinematic Ambient': 65,
+          'Alt Rock': 130,
+        };
+        const bpm = defaultBpmMap[genre];
+        const vector = estimateVectorFromTrack(genre, bpm);
+        const spotifyId = `custom-${item.trackId || idx}-${Math.random().toString(36).slice(2, 7)}`;
+
+        return {
+          id: `real-${item.trackId || idx}`,
+          title,
+          artist,
+          album,
+          genre,
+          releaseYear,
+          bpm,
+          durationSeconds,
+          coverImage,
+          previewUrl,
+          spotifyId,
+          spotifyUrl: `https://open.spotify.com/search/${encodeURIComponent(`${artist}${title}`)}`,
+          audioFeatures: {
+            danceability: vector.danceability,
+            energy: vector.energy,
+            valence: vector.valence,
+            tempo: bpm,
+            acousticness: vector.acousticness,
+            instrumentalness: vector.instrumentalness,
+          },
+          vector,
+        };
+      });
+    } catch (err) {
+      console.warn('iTunes direct search error:', err);
+      return [];
+    }
+  }
+
+  /**
+   * Searches the full PostgreSQL tracks table (all 50,000 container tracks) through the bridge
    */
   public async searchDatabase(query: string, limit: number = 12): Promise<SpotifySearchResultItem[]> {
     try {
       const res = await fetch(
-        `http://localhost:5000/api/tracks/search?q=${encodeURIComponent(query.trim())}&limit=${limit}`
+        `/api/tracks/search?q=${encodeURIComponent(query.trim())}&limit=${limit}`
       );
       if (!res.ok) return [];
       const rows = await res.json();
@@ -219,121 +328,71 @@ export class SpotifySearchService {
   }
 
   /**
-   * Search real songs via global music catalogue API
+   * Search tracks: First queries the 50,000 container tracks table (case-insensitive).
+   * Enriches any matched container song with real iTunes audio preview and artwork.
+   * If not found in the container, searches the global iTunes catalogue.
    */
-  public async searchTracks(query: string, limit: number = 8): Promise<SpotifySearchResultItem[]> {
+  public async searchTracks(query: string, limit: number = 12): Promise<SpotifySearchResultItem[]> {
     if (!query.trim()) return [];
 
-        const dbHits = await this.searchDatabase(query, limit);
-    if (dbHits.length > 0) return dbHits;
-
-    try {
-      const url = `https://itunes.apple.com/search?term=${encodeURIComponent(
-        query.trim()
-      )}&entity=song&limit=${limit}`;
-
-      const res = await fetch(url);
-      if (!res.ok) {
-        throw new Error(`Music search failed: ${res.statusText}`);
-      }
-
-      const data = await res.json();
-      if (!data.results || !Array.isArray(data.results)) {
-        return [];
-      }
-
-      interface ITunesItem {
-        trackId?: number;
-        trackName?: string;
-        artistName?: string;
-        collectionName?: string;
-        releaseDate?: string;
-        primaryGenreName?: string;
-        previewUrl?: string;
-        artworkUrl100?: string;
-        trackTimeMillis?: number;
-      }
-
-      return data.results.map((item: ITunesItem, idx: number) => {
-        const title = item.trackName || 'Untitled Track';
-        const artist = item.artistName || 'Unknown Artist';
-        const album = item.collectionName || `${title} - Single`;
-        const releaseYear = item.releaseDate
-          ? parseInt(item.releaseDate.substring(0, 4), 10)
-          : 2022;
-        const genre = mapGenre(item.primaryGenreName);
-        const previewUrl = item.previewUrl || '';
-        const coverImage = this.formatCoverImage(item.artworkUrl100);
-        const durationSeconds = item.trackTimeMillis
-          ? Math.round(item.trackTimeMillis / 1000)
-          : 210;
-
-        // Estimated BPM based on genre
-        const defaultBpmMap: Record<MusicGenre, number> = {
-          'Synthwave': 118,
-          'Cyber Techno': 128,
-          'Nu-Disco / Pop': 120,
-          'Lo-Fi Chill': 80,
-          'Indie Folk': 105,
-          'Neo-Soul / R&B': 92,
-          'Cinematic Ambient': 65,
-          'Alt Rock': 130,
-        };
-        const bpm = defaultBpmMap[genre];
-
-        const vector = estimateVectorFromTrack(genre, bpm);
-        const spotifyId = `custom-${item.trackId || idx}-${Math.random().toString(36).slice(2, 7)}`;
-
-        return {
-          id: `real-${item.trackId || idx}`,
-          title,
-          artist,
-          album,
-          genre,
-          releaseYear,
-          bpm,
-          durationSeconds,
-          coverImage,
-          previewUrl,
-          spotifyId,
-          spotifyUrl: `https://open.spotify.com/search/${encodeURIComponent(`${artist}${title}`)}`,
-          audioFeatures: {
-            danceability: vector.danceability,
-            energy: vector.energy,
-            valence: vector.valence,
-            tempo: bpm,
-            acousticness: vector.acousticness,
-            instrumentalness: vector.instrumentalness,
-          },
-          vector,
-        };
-      });
-    } catch (err) {
-      console.error('Failed to search real songs:', err);
-      return [];
+    // 1. Search full 50,000 tracks in PostgreSQL container
+    const dbHits = await this.searchDatabase(query, limit);
+    if (dbHits.length > 0) {
+      // 2. Ensure container songs have real iTunes preview audio and poster
+      const enrichedHits = await Promise.all(
+        dbHits.map(async (item) => {
+          if (!item.previewUrl || !item.coverImage || item.artist === 'Unknown Artist') {
+            const meta = await this.fetchSingleTrackMetadata(item.title, item.artist);
+            if (meta) {
+              if (meta.previewUrl) item.previewUrl = meta.previewUrl;
+              if (meta.coverImage) item.coverImage = meta.coverImage;
+              if (meta.artistName && (!item.artist || item.artist === 'Unknown Artist')) {
+                item.artist = meta.artistName;
+              }
+              // Persist media back to PostgreSQL container
+              try {
+                fetch(`/api/tracks/${encodeURIComponent(item.id)}/media`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ coverImage: item.coverImage, previewUrl: item.previewUrl }),
+                }).catch(() => {});
+              } catch {}
+            }
+          }
+          return item;
+        })
+      );
+      return enrichedHits;
     }
+
+    // 3. Fallback to global music catalogue
+    return this.searchItunesDirect(query, limit);
   }
 
   /**
-   * Fetches metadata for a single track title and optional artist
+   * Fetches metadata for a single track title and optional artist directly from iTunes
    */
   public async fetchSingleTrackMetadata(
     title: string,
     artist?: string
   ): Promise<{ coverImage: string; previewUrl: string; artistName: string } | null> {
     try {
-      const cleanTitle = title.replace(/\(.*?\)|\[.*?\]/g, '').trim();
-      const cleanArtist = artist && artist !== 'Unknown Artist' ? artist.trim() : '';
-      const searchTerm = cleanArtist ? `${cleanTitle} ${cleanArtist}` : cleanTitle;
+      const { cleanTitle, cleanArtist } = cleanTrackTitleAndArtist(title, artist);
+      const candidates: string[] = [];
+      if (cleanTitle && cleanArtist) candidates.push(`${cleanTitle} ${cleanArtist}`);
+      if (cleanTitle) candidates.push(cleanTitle);
+      if (title && title !== cleanTitle) candidates.push(title);
 
-      const results = await this.searchTracks(searchTerm, 1);
-      if (results.length > 0) {
-        const match = results[0]!;
-        return {
-          coverImage: match.coverImage,
-          previewUrl: match.previewUrl,
-          artistName: match.artist,
-        };
+      for (const term of candidates) {
+        const results = await this.searchItunesDirect(term, 3);
+        if (results.length > 0) {
+          const match = results.find((r) => r.previewUrl) || results[0]!;
+          return {
+            coverImage: match.coverImage,
+            previewUrl: match.previewUrl,
+            artistName: match.artist,
+          };
+        }
       }
     } catch (err) {
       console.warn(`[iTunes Metadata Lookup Error] for ${title}:`, err);

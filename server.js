@@ -29,30 +29,147 @@ function toPgVector(arr) {
   return `[${arr.join(',')}]`;
 }
 
-// Helper: Fetch missing album artwork and 30s audio preview URL from iTunes API
-async function fetchiTunesMetadata(title, artist) {
-  try {
-    const cleanTitle = title ? title.replace(/\(.*?\)|\[.*?\]/g, '').trim() : '';
-    const cleanArtist = (artist && artist !== 'Unknown Artist') ? artist.trim() : '';
-    const queryTerm = cleanArtist ? `${cleanTitle} ${cleanArtist}` : cleanTitle;
+// In-memory cache to prevent duplicate iTunes API lookups
+const itunesCache = new Map();
 
-    const query = encodeURIComponent(queryTerm);
-    const res = await fetch(`https://itunes.apple.com/search?term=${query}&entity=song&limit=1`);
-    if (!res.ok) return null;
-    const data = await res.json();
+// Helper: Clean Kaggle-style title and artist strings
+function cleanTrackTitleAndArtist(title, artist) {
+  let cleanArtist = String(artist || '')
+    .replace(/^\[['"]?|['"]?\]$/g, '') // remove python list brackets ['...']
+    .replace(/['"]+/g, '') // remove inner quotes
+    .split(/[,;&\/]|(?:\s+feat\.?\s+)/i)[0] // primary artist
+    .replace(/^\[+|\]+$/g, '')
+    .trim();
 
-    if (data.results && data.results.length > 0) {
-      const match = data.results[0];
-      return {
-        coverImage: match.artworkUrl100 ? match.artworkUrl100.replace('100x100bb', '600x600bb') : null,
-        previewUrl: match.previewUrl || null,
-        artistName: match.artistName || null,
-      };
-    }
-  } catch (err) {
-    console.warn(`[iTunes Search] Lookup error for ${title}:`, err.message);
+  if (cleanArtist === 'Unknown Artist' || cleanArtist === 'Various Artists') {
+    cleanArtist = '';
   }
+
+  let cleanTitle = String(title || '')
+    .replace(/\(.*?\)|\[.*?\]/g, '') // remove parentheses/brackets e.g. (Remastered)
+    .replace(/\s*-\s*.*(remaster|radio|live|single|deluxe|version|mono|stereo|bonus|mix).*$/i, '')
+    .replace(/\s+feat\..*$/i, '')
+    .replace(/['"“”]/g, '')
+    .trim();
+
+  return { cleanTitle: cleanTitle || String(title || '').trim(), cleanArtist };
+}
+
+// Helper: Query iTunes API with multiple fallback strategies
+async function fetchiTunesMetadata(title, artist) {
+  if (!title) return null;
+  const { cleanTitle, cleanArtist } = cleanTrackTitleAndArtist(title, artist);
+  const cacheKey = `${cleanTitle.toLowerCase()}:::${cleanArtist.toLowerCase()}`;
+
+  if (itunesCache.has(cacheKey)) {
+    return itunesCache.get(cacheKey);
+  }
+
+  // Strategies in order of precision:
+  // 1. Clean Title + Clean Artist (highest precision)
+  // 2. Clean Title alone
+  // 3. Raw title
+  const candidates = [];
+  if (cleanTitle && cleanArtist) candidates.push(`${cleanTitle} ${cleanArtist}`);
+  if (cleanTitle) candidates.push(cleanTitle);
+  if (title && title !== cleanTitle) candidates.push(title);
+
+  for (const queryTerm of candidates) {
+    try {
+      const query = encodeURIComponent(queryTerm);
+      const res = await fetch(`https://itunes.apple.com/search?term=${query}&media=music&entity=song&limit=5`);
+      
+      // If Apple rate-limits (HTTP 429) or errors, do not cache null poisonously
+      if (res.status === 429 || res.status >= 500) {
+        return null;
+      }
+      if (!res.ok) continue;
+
+      const data = await res.json();
+      if (data.results && data.results.length > 0) {
+        // Find best match with an audio preview
+        const match = data.results.find((r) => r.previewUrl) || data.results[0];
+        const result = {
+          coverImage: match.artworkUrl100 ? match.artworkUrl100.replace('100x100bb', '600x600bb') : null,
+          previewUrl: match.previewUrl || null,
+          artistName: match.artistName || null,
+        };
+        itunesCache.set(cacheKey, result);
+        return result;
+      }
+    } catch {
+      // network glitch, try next candidate
+    }
+  }
+
+  // Only cache null if search completed cleanly with 0 results
+  itunesCache.set(cacheKey, null);
   return null;
+}
+
+// Helper: Batched enrichment with concurrency control and safe PostgreSQL updates
+async function enrichTracksWithiTunes(rows, syncLimit = rows.length) {
+  const toEnrichSync = rows.slice(0, syncLimit);
+  const remaining = rows.slice(syncLimit);
+
+  const chunkSize = 4;
+  for (let i = 0; i < toEnrichSync.length; i += chunkSize) {
+    const chunk = toEnrichSync.slice(i, i + chunkSize);
+    await Promise.all(
+      chunk.map(async (row) => {
+        if (!row.cover_image || !row.preview_url || row.artist === 'Unknown Artist') {
+          const iTunesData = await fetchiTunesMetadata(row.title, row.artist);
+          if (iTunesData) {
+            row.cover_image = row.cover_image || iTunesData.coverImage;
+            row.preview_url = row.preview_url || iTunesData.previewUrl;
+            if ((!row.artist || row.artist === 'Unknown Artist') && iTunesData.artistName) {
+              row.artist = iTunesData.artistName;
+            }
+
+            // Persist to PostgreSQL container
+            if (row.track_id && (iTunesData.coverImage || iTunesData.previewUrl)) {
+              try {
+                await pool.query(
+                  `UPDATE tracks 
+                   SET cover_image = COALESCE(cover_image, $1), 
+                       preview_url = COALESCE(preview_url, $2) 
+                   WHERE track_id::text = $3::text;`,
+                  [iTunesData.coverImage || null, iTunesData.previewUrl || null, String(row.track_id)]
+                );
+              } catch (e) {
+                // non-blocking
+              }
+            }
+          }
+        }
+        return row;
+      })
+    );
+  }
+
+  // Background enrich the rest without blocking HTTP response
+  if (remaining.length > 0) {
+    setTimeout(async () => {
+      for (const row of remaining) {
+        if (!row.cover_image || !row.preview_url) {
+          const iTunesData = await fetchiTunesMetadata(row.title, row.artist);
+          if (iTunesData && row.track_id) {
+            try {
+              await pool.query(
+                `UPDATE tracks 
+                 SET cover_image = COALESCE(cover_image, $1), 
+                     preview_url = COALESCE(preview_url, $2) 
+                 WHERE track_id::text = $3::text;`,
+                [iTunesData.coverImage || null, iTunesData.previewUrl || null, String(row.track_id)]
+              );
+            } catch {}
+          }
+        }
+      }
+    }, 100);
+  }
+
+  return rows;
 }
 
 // ── Root Diagnostic Route ──────────────────────────────────────────────
@@ -209,22 +326,8 @@ app.post('/api/recommendations', async (req, res) => {
 
     const result = await pool.query(query, params);
 
-    // Enrich recommendations with iTunes metadata if artist or cover image is missing
-    const enrichedRecommendations = await Promise.all(
-      result.rows.map(async (row) => {
-        if (!row.cover_image || !row.preview_url || row.artist === 'Unknown Artist') {
-          const iTunesData = await fetchiTunesMetadata(row.title, row.artist);
-          if (iTunesData) {
-            row.cover_image = row.cover_image || iTunesData.coverImage;
-            row.preview_url = row.preview_url || iTunesData.previewUrl;
-            if (row.artist === 'Unknown Artist' && iTunesData.artistName) {
-              row.artist = iTunesData.artistName;
-            }
-          }
-        }
-        return row;
-      })
-    );
+    // Enrich recommendations with iTunes metadata with concurrency control and DB persistence
+    const enrichedRecommendations = await enrichTracksWithiTunes(result.rows, 12);
 
     const executionTimeMs = Date.now() - startTime;
 
@@ -368,22 +471,8 @@ app.get('/api/tracks', async (req, res) => {
     }
     const { rows } = await pool.query(query, params);
 
-    // Async enrichment for tracks missing artwork, audio previews, or artist names
-    const enrichedRows = await Promise.all(
-      rows.map(async (row) => {
-        if (!row.cover_image || !row.preview_url || row.artist === 'Unknown Artist') {
-          const iTunesData = await fetchiTunesMetadata(row.title, row.artist);
-          if (iTunesData) {
-            row.cover_image = row.cover_image || iTunesData.coverImage;
-            row.preview_url = row.preview_url || iTunesData.previewUrl;
-            if (row.artist === 'Unknown Artist' && iTunesData.artistName) {
-              row.artist = iTunesData.artistName;
-            }
-          }
-        }
-        return row;
-      })
-    );
+    // Async enrichment for tracks missing artwork or audio previews with rate-limit protection and DB persistence
+    const enrichedRows = await enrichTracksWithiTunes(rows, 12);
 
     res.json(enrichedRows);
   } catch (err) {
@@ -466,50 +555,74 @@ app.post('/api/tracks', async (req, res) => {
   }
 });
 
-// Search the full tracks table (all 50,000 rows)
+// Search the full tracks table (all 50,000 rows) - case-insensitive multi-field search
 app.get('/api/tracks/search', async (req, res) => {
   const q = String(req.query.q || '').trim();
-  const limit = Math.min(parseInt(req.query.limit, 10) || 12, 30);
+  const limit = Math.min(parseInt(req.query.limit, 10) || 12, 50);
   if (!q) return res.json([]);
 
   try {
-    const { rows } = await pool.query(
-      `SELECT
-         t.track_id::text AS track_id,
-         t.title, t.duration, t.bpm,
-         COALESCE(g.name, 'Nu-Disco / Pop') AS genre,
-         COALESCE(STRING_AGG(DISTINCT a.name, ', '), 'Unknown Artist') AS artist,
-         t.cover_image, t.preview_url,
-         af.energy, af.danceability, af.valence, af.acousticness, af.instrumentalness
-       FROM tracks t
-       LEFT JOIN audio_features af ON af.track_id = t.track_id
-       LEFT JOIN performs p ON p.track_id = t.track_id
-       LEFT JOIN artist a ON a.artist_id = p.artist_id
-       LEFT JOIN genre g ON g.genre_id = t.genre_id
-       WHERE t.title ILIKE $1 OR a.name ILIKE $1
-       GROUP BY t.track_id, t.title, t.duration, t.bpm, g.name, t.cover_image, t.preview_url,
-                af.energy, af.danceability, af.valence, af.acousticness, af.instrumentalness
-       ORDER BY (t.title ILIKE $2) DESC, t.title ASC
-       LIMIT $3;`,
-      [`%${q}%`, `${q}%`, limit]
-    );
+    const words = q.split(/\s+/).filter(Boolean);
+    let whereClause = `(t.title ILIKE $1 OR a.name ILIKE $1 OR (t.title || ' ' || COALESCE(a.name, '')) ILIKE $1 OR (COALESCE(a.name, '') || ' ' || t.title) ILIKE $1)`;
+    const params = [`%${q}%`, `${q}%`];
 
-    const enriched = await Promise.all(
-      rows.map(async (row) => {
-        if (!row.cover_image || !row.preview_url) {
-          const meta = await fetchiTunesMetadata(row.title, row.artist);
-          if (meta) {
-            row.cover_image = row.cover_image || meta.coverImage;
-            row.preview_url = row.preview_url || meta.previewUrl;
-            if (row.artist === 'Unknown Artist' && meta.artistName) row.artist = meta.artistName;
-          }
-        }
-        return row;
-      })
-    );
+    // If multi-word query (e.g. "Daft Punk Get Lucky"), match words distributed across title & artist
+    if (words.length > 1) {
+      const wordClauses = words.map((w) => {
+        const paramIdx = params.length + 1;
+        params.push(`%${w}%`);
+        return `(t.title ILIKE $${paramIdx} OR a.name ILIKE $${paramIdx} OR COALESCE(g.name, '') ILIKE $${paramIdx})`;
+      });
+      whereClause = `(${whereClause} OR (${wordClauses.join(' AND ')}))`;
+    }
+
+    const limitParamIdx = params.length + 1;
+    params.push(limit);
+
+    const query = `
+      SELECT
+        t.track_id::text AS track_id,
+        t.title, t.duration, t.bpm,
+        COALESCE(g.name, 'Nu-Disco / Pop') AS genre,
+        COALESCE(STRING_AGG(DISTINCT a.name, ', '), 'Unknown Artist') AS artist,
+        t.cover_image, t.preview_url,
+        af.energy, af.danceability, af.valence, af.acousticness, af.instrumentalness
+      FROM tracks t
+      LEFT JOIN audio_features af ON af.track_id = t.track_id
+      LEFT JOIN performs p ON p.track_id = t.track_id
+      LEFT JOIN artist a ON a.artist_id = p.artist_id
+      LEFT JOIN genre g ON g.genre_id = t.genre_id
+      WHERE ${whereClause}
+      GROUP BY t.track_id, t.title, t.duration, t.bpm, g.name, t.cover_image, t.preview_url,
+               af.energy, af.danceability, af.valence, af.acousticness, af.instrumentalness
+      ORDER BY (t.title ILIKE $2) DESC, (COALESCE(STRING_AGG(DISTINCT a.name, ', '), '') ILIKE $2) DESC, t.title ASC
+      LIMIT $${limitParamIdx};
+    `;
+
+    const { rows } = await pool.query(query, params);
+    const enriched = await enrichTracksWithiTunes(rows, rows.length);
     res.json(enriched);
   } catch (err) {
     console.error('[DB Error in track search]:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update track media assets (cover image and preview URL)
+app.patch('/api/tracks/:trackId/media', async (req, res) => {
+  const { trackId } = req.params;
+  const { coverImage, previewUrl } = req.body;
+  try {
+    await pool.query(
+      `UPDATE tracks 
+       SET cover_image = COALESCE($1, cover_image), 
+           preview_url = COALESCE($2, preview_url) 
+       WHERE track_id::text = $3::text;`,
+      [coverImage || null, previewUrl || null, String(trackId)]
+    );
+    res.json({ success: true, trackId });
+  } catch (err) {
+    console.error('[DB Error in track media update]:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
