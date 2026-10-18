@@ -374,6 +374,54 @@ app.post('/api/tracks', async (req, res) => {
   }
 });
 
+// Search the full tracks table (all 50,000 rows)
+app.get('/api/tracks/search', async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const limit = Math.min(parseInt(req.query.limit, 10) || 12, 30);
+  if (!q) return res.json([]);
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT
+         t.track_id::text AS track_id,
+         t.title, t.duration, t.bpm,
+         COALESCE(g.name, 'Nu-Disco / Pop') AS genre,
+         COALESCE(STRING_AGG(DISTINCT a.name, ', '), 'Unknown Artist') AS artist,
+         t.cover_image, t.preview_url,
+         af.energy, af.danceability, af.valence, af.acousticness, af.instrumentalness
+       FROM tracks t
+       LEFT JOIN audio_features af ON af.track_id = t.track_id
+       LEFT JOIN performs p ON p.track_id = t.track_id
+       LEFT JOIN artist a ON a.artist_id = p.artist_id
+       LEFT JOIN genre g ON g.genre_id = t.genre_id
+       WHERE t.title ILIKE $1 OR a.name ILIKE $1
+       GROUP BY t.track_id, t.title, t.duration, t.bpm, g.name, t.cover_image, t.preview_url,
+                af.energy, af.danceability, af.valence, af.acousticness, af.instrumentalness
+       ORDER BY (t.title ILIKE $2) DESC, t.title ASC
+       LIMIT $3;`,
+      [`%${q}%`, `${q}%`, limit]
+    );
+
+    const enriched = await Promise.all(
+      rows.map(async (row) => {
+        if (!row.cover_image || !row.preview_url) {
+          const meta = await fetchiTunesMetadata(row.title, row.artist);
+          if (meta) {
+            row.cover_image = row.cover_image || meta.coverImage;
+            row.preview_url = row.preview_url || meta.previewUrl;
+            if (row.artist === 'Unknown Artist' && meta.artistName) row.artist = meta.artistName;
+          }
+        }
+        return row;
+      })
+    );
+    res.json(enriched);
+  } catch (err) {
+    console.error('[DB Error in track search]:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── 5. Playlists & Playlist Tracks ──────────────────────────────────────
 app.get('/api/users/:userId/playlists', async (req, res) => {
   const { userId } = req.params;

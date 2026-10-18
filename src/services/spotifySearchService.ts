@@ -159,11 +159,73 @@ export class SpotifySearchService {
     return rawUrl.replace(/\d+x\d+bb/g, '600x600bb');
   }
 
+    /**
+   * Searches the full PostgreSQL tracks table through the Express bridge
+   */
+  public async searchDatabase(query: string, limit: number = 12): Promise<SpotifySearchResultItem[]> {
+    try {
+      const res = await fetch(
+        `http://localhost:5000/api/tracks/search?q=${encodeURIComponent(query.trim())}&limit=${limit}`
+      );
+      if (!res.ok) return [];
+      const rows = await res.json();
+      if (!Array.isArray(rows)) return [];
+
+      return rows.map((row: any): SpotifySearchResultItem => {
+        const id = String(row.track_id);
+        const title = row.title || `Track #${id}`;
+        const artist = row.artist || 'Unknown Artist';
+        const bpm = Number(row.bpm) || 120;
+        const energy = Number(row.energy ?? 0.5);
+        const danceability = Number(row.danceability ?? 0.5);
+        const valence = Number(row.valence ?? 0.5);
+        const acousticness = Number(row.acousticness ?? 0.5);
+        const instrumentalness = Number(row.instrumentalness ?? 0.1);
+        const genre = (row.genre === 'Uncategorized' ? 'Nu-Disco / Pop' : row.genre) as MusicGenre;
+        const looksLikeSpotifyId = /^[A-Za-z0-9]{22}$/.test(id);
+
+        return {
+          id,
+          title,
+          artist,
+          album: 'Single',
+          genre,
+          releaseYear: 2022,
+          bpm,
+          durationSeconds: Number(row.duration) || 180,
+          coverImage: this.formatCoverImage(row.cover_image),
+          previewUrl: row.preview_url || '',
+          spotifyId: id,
+          spotifyUrl: looksLikeSpotifyId
+            ? `https://open.spotify.com/track/${id}`
+            : `https://open.spotify.com/search/${encodeURIComponent(`${artist}${title}`)}`,
+          audioFeatures: { danceability, energy, valence, tempo: bpm, acousticness, instrumentalness },
+          vector: {
+            danceability,
+            energy,
+            valence,
+            beatsBpmNormalized: bpmToNormalized(bpm),
+            vibeChillToHype: Number(((energy + danceability) / 2).toFixed(2)),
+            acousticness,
+            instrumentalness,
+            moodHarmonics: 0.5,
+          },
+        };
+      });
+    } catch (err) {
+      console.warn('Database search failed, falling back to iTunes:', err);
+      return [];
+    }
+  }
+
   /**
    * Search real songs via global music catalogue API
    */
   public async searchTracks(query: string, limit: number = 8): Promise<SpotifySearchResultItem[]> {
     if (!query.trim()) return [];
+
+        const dbHits = await this.searchDatabase(query, limit);
+    if (dbHits.length > 0) return dbHits;
 
     try {
       const url = `https://itunes.apple.com/search?term=${encodeURIComponent(
