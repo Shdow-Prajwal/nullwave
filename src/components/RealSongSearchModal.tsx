@@ -10,6 +10,7 @@ import {
   Loader2,
   Disc,
   Activity,
+  Heart,
 } from 'lucide-react';
 import { Song } from '../types/music';
 import { spotifySearchService, SpotifySearchResultItem } from '../services/spotifySearchService';
@@ -20,6 +21,8 @@ interface RealSongSearchModalProps {
   onClose: () => void;
   onAddSongToCatalog: (song: Song) => void;
   onPlaySong: (song: Song) => void;
+  onToggleLike: (songId: string, song?: Song) => void;
+  likedSongIds: Set<string>;
   currentPlayingSong: Song | null;
   isPlaying: boolean;
 }
@@ -42,6 +45,8 @@ export const RealSongSearchModal: React.FC<RealSongSearchModalProps> = ({
   onClose,
   onAddSongToCatalog,
   onPlaySong,
+  onToggleLike,
+  likedSongIds,
   currentPlayingSong,
   isPlaying,
 }) => {
@@ -167,6 +172,7 @@ export const RealSongSearchModal: React.FC<RealSongSearchModalProps> = ({
             results.map((item) => {
               const isAdded = addedIds.has(item.id);
               const song = spotifySearchService.convertToSong(item);
+              const isLiked = likedSongIds.has(song.id);
               const isThisPlaying = currentPlayingSong?.id === song.id && isPlaying;
 
               return (
@@ -225,6 +231,18 @@ export const RealSongSearchModal: React.FC<RealSongSearchModalProps> = ({
 
                   {/* Actions */}
                   <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => onToggleLike(song.id, song)}
+                      className={`p-2 rounded-xl border transition-colors ${
+                        isLiked
+                          ? 'bg-rose-500/20 border-rose-500/40 text-rose-400'
+                          : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-rose-300 hover:border-rose-500/40'
+                      }`}
+                      title={isLiked ? 'Remove from Liked Songs' : 'Add to Liked Songs'}
+                    >
+                      <Heart className={`w-4 h-4 ${isLiked ? 'fill-current' : ''}`} />
+                    </button>
+
                     <button
                       onClick={() => handleAddTrack(item)}
                       disabled={isAdded}

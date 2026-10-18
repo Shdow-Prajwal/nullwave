@@ -280,15 +280,23 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Synchronize Catalog from PostgreSQL Container (100 tracks initial load)
+  // 2. Synchronize Catalog from PostgreSQL: 50 songs nearest to the user's taste vector
   useEffect(() => {
     let isMounted = true;
 
     async function loadCatalog() {
       try {
-        const res = await fetch(`${API_BASE_URL}/tracks?limit=100`);
+        const tasteVector = activeUser?.taste_vector?.length === 8
+          ? activeUser.taste_vector
+          : musicVectorToArray(targetVector);
+        const res = await fetch(`${API_BASE_URL}/recommendations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ vector: tasteVector, limit: 50 }),
+        });
         if (res.ok) {
-          const dbTracks = await res.json();
+          const payload = await res.json();
+          const dbTracks = Array.isArray(payload) ? payload : payload.recommendations;
           if (Array.isArray(dbTracks) && dbTracks.length > 0 && isMounted) {
             const mappedSongs = dbTracks.map(mapDbTrackToSong);
             setCatalog(mappedSongs);
@@ -298,7 +306,7 @@ export default function App() {
           }
         }
       } catch (err) {
-        console.warn('PostgreSQL container not reachable for tracks, using fallback:', err);
+        console.warn('PostgreSQL container not reachable for taste recommendations, using fallback:', err);
       }
 
       // Fallback to local relational simulation if container backend is offline
@@ -558,15 +566,23 @@ export default function App() {
     }
   }, [catalog, currentSong, isPlaying, recordListeningSession]);
 
-  // Toggle Like
-  const handleToggleLike = async (songId: string) => {
+  // Toggle Like (accepts optional song metadata so any song, incl. search results, can be liked)
+  const handleToggleLike = async (songId: string, songData?: Song) => {
     const uid = activeUser?.user_id || 1;
+    const song = songData || catalog.find((s) => s.id === songId);
+    if (song) {
+      // Register locally so offline fallback + playlist resolution can find it
+      relationalDbService.insertSong(song);
+    }
+    const payload = song
+      ? { trackId: songId, song: { ...song, vectorArray: musicVectorToArray(song.vector) } }
+      : { trackId: songId };
     let response: Response;
     try {
       response = await fetch(`${API_BASE_URL}/users/${uid}/likes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ trackId: songId }),
+        body: JSON.stringify(payload),
       });
     } catch (err) {
       console.warn('Could not sync like to PostgreSQL, using local likes:', err);
@@ -626,16 +642,26 @@ export default function App() {
     setCatalog((prev) => [newSong, ...prev.filter((s) => s.id !== newSong.id)]);
   };
 
-  // Expand catalog dynamically
+  // Expand catalog dynamically with the next tier of taste-matched tracks
   const handleExpandCatalog = async (count: number = 8) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/tracks?limit=${catalog.length + count}`);
+      const tasteVector = activeUser?.taste_vector?.length === 8
+        ? activeUser.taste_vector
+        : musicVectorToArray(targetVector);
+      const res = await fetch(`${API_BASE_URL}/recommendations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vector: tasteVector, limit: catalog.length + count }),
+      });
       if (res.ok) {
-        const dbTracks = await res.json();
-        const mappedSongs = dbTracks.map(mapDbTrackToSong);
-        setCatalog(mappedSongs);
-        pgVectorService.setCatalog(mappedSongs);
-        return;
+        const payload = await res.json();
+        const dbTracks = Array.isArray(payload) ? payload : payload.recommendations;
+        if (Array.isArray(dbTracks)) {
+          const mappedSongs = dbTracks.map(mapDbTrackToSong);
+          setCatalog(mappedSongs);
+          pgVectorService.setCatalog(mappedSongs);
+          return;
+        }
       }
     } catch (err) {
       console.warn('Expanding catalog via local seed fallback:', err);
@@ -1071,6 +1097,8 @@ export default function App() {
         onClose={() => setIsRealSongSearchOpen(false)}
         onAddSongToCatalog={handleAddSongToCatalog}
         onPlaySong={handlePlayToggle}
+        onToggleLike={handleToggleLike}
+        likedSongIds={likedSongIds}
         currentPlayingSong={currentSong || catalog[0]!}
         isPlaying={isPlaying}
       />

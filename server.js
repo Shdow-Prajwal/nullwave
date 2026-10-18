@@ -55,6 +55,132 @@ async function fetchiTunesMetadata(title, artist) {
   return null;
 }
 
+// Helper: Constrain a number to the [0, 1] audio-feature range
+function clamp01(value, fallback = 0.5) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(1, Math.max(0, n));
+}
+
+// Helper: Build a valid 8D feature vector from arbitrary song metadata
+function normalizeSongVector(song) {
+  const provided = song?.vectorArray;
+  if (Array.isArray(provided) && provided.length === 8 && provided.every((n) => Number.isFinite(Number(n)))) {
+    return provided.map((n) => clamp01(n));
+  }
+  const bpm = Number(song?.bpm) || 120;
+  const tempoNorm = clamp01((bpm - 60) / 120, 0.5);
+  const f = song?.audioFeatures || {};
+  return [
+    clamp01(f.danceability),
+    clamp01(f.energy),
+    clamp01(f.valence),
+    tempoNorm,
+    clamp01(f.energy),
+    clamp01(f.acousticness),
+    clamp01(f.instrumentalness),
+    0.5,
+  ];
+}
+
+// Helper: Upsert any song (e.g. from search) into tracks/artist/performs/audio_features
+// so that it can be liked and appear alongside catalog tracks in playlist views.
+async function ensureTrackRecord(song) {
+  if (!song || song.id === undefined || song.id === null) return null;
+
+  const trackId = String(song.id).slice(0, 255);
+  const title = (song.title || `Track ${trackId}`).slice(0, 150);
+  const duration = Math.max(1, Math.round(Number(song.durationSeconds) || 180));
+  const bpm = Math.max(1, Math.round(Number(song.bpm) || 120));
+  const coverImage = song.coverImage || null;
+  const previewUrl = song.previewUrl || null;
+  const artistName = (song.artist || 'Unknown Artist').slice(0, 255);
+  const vector = normalizeSongVector(song);
+  const f = song.audioFeatures || {};
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    let genreId = 4; // Nu-Disco / Pop fallback
+    if (song.genre) {
+      const g = await client.query(
+        'INSERT INTO genre (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING genre_id;',
+        [String(song.genre).slice(0, 50)]
+      );
+      genreId = g.rows[0].genre_id;
+    }
+
+    await client.query(
+      `INSERT INTO tracks (track_id, title, duration, bpm, genre_id, cover_image, preview_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (track_id) DO UPDATE SET
+         title = EXCLUDED.title,
+         duration = EXCLUDED.duration,
+         bpm = EXCLUDED.bpm,
+         genre_id = EXCLUDED.genre_id,
+         cover_image = COALESCE(EXCLUDED.cover_image, tracks.cover_image),
+         preview_url = COALESCE(EXCLUDED.preview_url, tracks.preview_url);`,
+      [trackId, title, duration, bpm, genreId, coverImage, previewUrl]
+    );
+
+    const findArtist = await client.query('SELECT artist_id FROM artist WHERE name = $1;', [artistName]);
+    let artistId;
+    if (findArtist.rows.length > 0) {
+      artistId = findArtist.rows[0].artist_id;
+    } else {
+      artistId = (await client.query('INSERT INTO artist (name) VALUES ($1) RETURNING artist_id;', [artistName])).rows[0].artist_id;
+    }
+
+    await client.query(
+      'INSERT INTO performs (artist_id, track_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING;',
+      [artistId, trackId, 'main']
+    );
+
+    await client.query(
+      `INSERT INTO audio_features (
+        track_id, energy, danceability, valence, acousticness, instrumentalness, liveness, speechiness, tempo_norm, feature_vector
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::vector)
+      ON CONFLICT (track_id) DO NOTHING;`,
+      [
+        trackId,
+        clamp01(f.energy),
+        clamp01(f.danceability),
+        clamp01(f.valence),
+        clamp01(f.acousticness),
+        clamp01(f.instrumentalness),
+        0.5,
+        0.1,
+        vector[3],
+        toPgVector(vector),
+      ]
+    );
+
+    await client.query('COMMIT');
+    return trackId;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('[DB Error in ensureTrackRecord]:', err.message);
+    return null;
+  } finally {
+    client.release();
+  }
+}
+
+// Helper: Run an async mapper over items with a concurrency ceiling
+async function mapWithConcurrency(items, limit, mapper) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      results[index] = await mapper(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 // ── Root Diagnostic Route ──────────────────────────────────────────────
 app.get('/', (req, res) => {
   res.send('🚀 VectorVibe Express Bridge API is active!');
@@ -209,22 +335,21 @@ app.post('/api/recommendations', async (req, res) => {
 
     const result = await pool.query(query, params);
 
-    // Enrich recommendations with iTunes metadata if artist or cover image is missing
-    const enrichedRecommendations = await Promise.all(
-      result.rows.map(async (row) => {
-        if (!row.cover_image || !row.preview_url || row.artist === 'Unknown Artist') {
-          const iTunesData = await fetchiTunesMetadata(row.title, row.artist);
-          if (iTunesData) {
-            row.cover_image = row.cover_image || iTunesData.coverImage;
-            row.preview_url = row.preview_url || iTunesData.previewUrl;
-            if (row.artist === 'Unknown Artist' && iTunesData.artistName) {
-              row.artist = iTunesData.artistName;
-            }
+    // Enrich recommendations with iTunes metadata if artist or cover image is missing.
+    // Concurrency is capped to avoid iTunes 429 rate limiting on large limits (e.g. 50).
+    const enrichedRecommendations = await mapWithConcurrency(result.rows, 4, async (row) => {
+      if (!row.cover_image || !row.preview_url || row.artist === 'Unknown Artist') {
+        const iTunesData = await fetchiTunesMetadata(row.title, row.artist);
+        if (iTunesData) {
+          row.cover_image = row.cover_image || iTunesData.coverImage;
+          row.preview_url = row.preview_url || iTunesData.previewUrl;
+          if (row.artist === 'Unknown Artist' && iTunesData.artistName) {
+            row.artist = iTunesData.artistName;
           }
         }
-        return row;
-      })
-    );
+      }
+      return row;
+    });
 
     const executionTimeMs = Date.now() - startTime;
 
@@ -513,7 +638,7 @@ app.delete('/api/playlists/:playlistId/tracks/:trackId', async (req, res) => {
 
 app.post('/api/users/:userId/likes', async (req, res) => {
   const { userId } = req.params;
-  const { trackId } = req.body;
+  const { trackId, song } = req.body;
   if (trackId === undefined || trackId === null) {
     return res.status(400).json({ error: 'trackId is required' });
   }
@@ -543,6 +668,11 @@ app.post('/api/users/:userId/likes', async (req, res) => {
       );
       console.log(`[DB] User ${userId} unliked track "${strTrackId}"`);
       return res.json({ success: true, trackId: strTrackId, isLiked: false });
+    }
+
+    // Persist non-catalog songs (e.g. from search) so they resolve in playlist views
+    if (song && typeof song === 'object') {
+      await ensureTrackRecord({ ...song, id: song.id ?? strTrackId });
     }
 
     let plRes = await pool.query(

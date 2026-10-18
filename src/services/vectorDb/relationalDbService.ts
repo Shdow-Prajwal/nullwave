@@ -1506,6 +1506,8 @@ SELECT 'Database setup complete!' AS status,
         duration: 210,
         bpm: 120,
         genre_id: 1,
+        album: 'Single',
+        releaseYear: 2022,
       };
       this.tracks.push(newTrack);
       return newTrack;
