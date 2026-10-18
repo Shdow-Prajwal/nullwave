@@ -153,31 +153,36 @@ export class PgVectorEngine {
   }
 
   /**
-   * Synthesizes the user's UserTasteProfile vector from their listening history
-   * using exponential time decay and engagement weights.
+   * Synthesizes the user's UserTasteProfile vector from both their listening history
+   * AND their explicitly liked songs using exponential time decay and engagement weights.
    */
-  public synthesizeUserTaste(history: HistoryRecord[]): UserTasteProfile {
-    if (history.length === 0) {
-      const defaultVector = arrayToMusicVector(new Array(8).fill(0.5));
+  public synthesizeUserTaste(
+    history: HistoryRecord[],
+    likedSongs: Song[] = [],
+    baseVector?: MusicVector
+  ): UserTasteProfile {
+    const defaultVector = baseVector || arrayToMusicVector([0.75, 0.65, 0.6, 0.5, 0.6, 0.25, 0.5, 0.45]);
+
+    if (history.length === 0 && likedSongs.length === 0) {
       return {
         tasteVector: defaultVector,
         totalPlays: 0,
         totalListeningMinutes: 0,
         likedSongIds: [],
         genreAffinity: {
-          Synthwave: 0,
-          'Lo-Fi Chill': 0,
-          'Indie Folk': 0,
-          'Nu-Disco / Pop': 0,
-          'Cyber Techno': 0,
-          'Neo-Soul / R&B': 0,
-          'Cinematic Ambient': 0,
-          'Alt Rock': 0,
+          Synthwave: 15,
+          'Lo-Fi Chill': 10,
+          'Indie Folk': 10,
+          'Nu-Disco / Pop': 30,
+          'Cyber Techno': 15,
+          'Neo-Soul / R&B': 10,
+          'Cinematic Ambient': 5,
+          'Alt Rock': 5,
         },
         moodTrend: {
-          avgValence: 0.5,
-          avgEnergy: 0.5,
-          avgDanceability: 0.5,
+          avgValence: defaultVector.valence,
+          avgEnergy: defaultVector.energy,
+          avgDanceability: defaultVector.danceability,
         },
         dominantVibeDescription: 'Exploring new sounds',
       };
@@ -187,20 +192,39 @@ export class PgVectorEngine {
     const halfLifeDays = 7.0; // Recency decay factor
     const entries: { vector: number[]; weight: number }[] = [];
     const genreCounts: Record<string, number> = {};
-    const likedSongIds: string[] = [];
+    const likedIdsSet = new Set<string>();
     let totalSeconds = 0;
 
     let sumValence = 0;
     let sumEnergy = 0;
     let sumDance = 0;
+    let totalWeightSum = 0;
 
+    // 1. Process explicit Liked Songs (strongest positive signal: weight = 2.5)
+    for (const song of likedSongs) {
+      likedIdsSet.add(song.id);
+      const likedWeight = 2.5;
+
+      entries.push({
+        vector: musicVectorToArray(song.vector),
+        weight: likedWeight,
+      });
+
+      genreCounts[song.genre] = (genreCounts[song.genre] || 0) + 2;
+      sumValence += song.vector.valence * likedWeight;
+      sumEnergy += song.vector.energy * likedWeight;
+      sumDance += song.vector.danceability * likedWeight;
+      totalWeightSum += likedWeight;
+    }
+
+    // 2. Process Listening History (with recency decay and completion weight)
     for (const record of history) {
       const song = record.song;
       const daysAgo = Math.max(0, (now - new Date(record.listenedAt).getTime()) / (1000 * 3600 * 24));
       // Exponential decay: exp(-ln(2) * t / t_half)
       const recencyWeight = Math.exp((-Math.LN2 * daysAgo) / halfLifeDays);
       const completionWeight = Math.max(0.2, record.completionPercent / 100);
-      const likeMultiplier = record.userLiked ? 1.6 : 1.0;
+      const likeMultiplier = record.userLiked || likedIdsSet.has(song.id) ? 1.8 : 1.0;
 
       const totalWeight = recencyWeight * completionWeight * likeMultiplier;
 
@@ -211,22 +235,23 @@ export class PgVectorEngine {
 
       genreCounts[song.genre] = (genreCounts[song.genre] || 0) + 1;
       if (record.userLiked) {
-        likedSongIds.push(song.id);
+        likedIdsSet.add(song.id);
       }
       totalSeconds += (song.durationSeconds * record.completionPercent) / 100;
 
-      sumValence += song.vector.valence;
-      sumEnergy += song.vector.energy;
-      sumDance += song.vector.danceability;
+      sumValence += song.vector.valence * totalWeight;
+      sumEnergy += song.vector.energy * totalWeight;
+      sumDance += song.vector.danceability * totalWeight;
+      totalWeightSum += totalWeight;
     }
 
     const synthesizedArr = weightedVectorCentroid(entries);
     const tasteVector = arrayToMusicVector(synthesizedArr);
 
-    const totalRecords = history.length;
-    const avgValence = Number((sumValence / totalRecords).toFixed(2));
-    const avgEnergy = Number((sumEnergy / totalRecords).toFixed(2));
-    const avgDanceability = Number((sumDance / totalRecords).toFixed(2));
+    const safeWeight = totalWeightSum > 0 ? totalWeightSum : 1;
+    const avgValence = Number((sumValence / safeWeight).toFixed(2));
+    const avgEnergy = Number((sumEnergy / safeWeight).toFixed(2));
+    const avgDanceability = Number((sumDance / safeWeight).toFixed(2));
 
     // Calculate genre affinities
     const genreAffinity: Record<MusicGenre, number> = {
@@ -240,34 +265,40 @@ export class PgVectorEngine {
       'Alt Rock': 0,
     };
 
+    let totalGenreWeight = 0;
+    for (const genre in genreCounts) {
+      totalGenreWeight += genreCounts[genre] || 0;
+    }
     for (const genre in genreCounts) {
       const count = genreCounts[genre] || 0;
-      if (genre in genreAffinity) {
-        genreAffinity[genre as MusicGenre] = Math.round((count / totalRecords) * 100);
+      if (genre in genreAffinity && totalGenreWeight > 0) {
+        genreAffinity[genre as MusicGenre] = Math.round((count / totalGenreWeight) * 100);
       }
     }
 
     // Determine dominant vibe description
     let dominantVibe = 'Balanced Eclectic Mix';
-    if (tasteVector.danceability > 0.75 && tasteVector.energy > 0.75) {
+    if (tasteVector.danceability > 0.72 && tasteVector.energy > 0.72) {
       dominantVibe = 'High-Octane Club & Electro Dance';
-    } else if (tasteVector.valence > 0.75 && tasteVector.danceability > 0.7) {
+    } else if (tasteVector.valence > 0.72 && tasteVector.danceability > 0.68) {
       dominantVibe = 'Euphoric Upbeat Nu-Disco Groove';
-    } else if (tasteVector.vibeChillToHype < 0.3 && tasteVector.acousticness > 0.5) {
+    } else if (tasteVector.vibeChillToHype < 0.35 && tasteVector.acousticness > 0.45) {
       dominantVibe = 'Deep Lo-Fi Focus & Mellow Coffee';
-    } else if (tasteVector.energy > 0.85 && tasteVector.vibeChillToHype > 0.85) {
+    } else if (tasteVector.energy > 0.82 && tasteVector.vibeChillToHype > 0.8) {
       dominantVibe = 'Peak Velocity Cyber Techno';
-    } else if (tasteVector.acousticness > 0.7) {
-      dominantVibe = 'Warm Organic Indie Acoustics';
+    } else if (tasteVector.acousticness > 0.65) {
+      dominantVibe = 'Organic Acoustic & Warm Indie';
+    } else if (tasteVector.valence < 0.35 && tasteVector.energy < 0.45) {
+      dominantVibe = 'Nocturnal Melancholy & Dark Synth';
     } else if (tasteVector.moodHarmonics > 0.7) {
       dominantVibe = 'Introspective Nocturne & Ambient Depth';
     }
 
     return {
       tasteVector,
-      totalPlays: totalRecords,
+      totalPlays: history.length,
       totalListeningMinutes: Math.round(totalSeconds / 60),
-      likedSongIds,
+      likedSongIds: Array.from(likedIdsSet),
       genreAffinity,
       moodTrend: {
         avgValence,

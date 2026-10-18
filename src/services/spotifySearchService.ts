@@ -150,7 +150,56 @@ function estimateVectorFromTrack(genre: MusicGenre, bpm: number): MusicVector {
   }
 }
 
+export function cleanTrackTitleAndArtist(title: string, artist?: string) {
+  let cleanArtist = String(artist || '')
+    .replace(/^\[['"]?|['"]?\]$/g, '') // remove python list brackets ['...']
+    .replace(/['"]+/g, '') // remove inner quotes
+    .split(/[,;&\/]|(?:\s+feat\.?\s+)/i)[0] // primary artist
+    .replace(/^\[+|\]+$/g, '')
+    .trim();
+
+  if (cleanArtist === 'Unknown Artist' || cleanArtist === 'Various Artists') {
+    cleanArtist = '';
+  }
+
+  let cleanTitle = String(title || '')
+    .replace(/\(.*?\)|\[.*?\]/g, '') // remove parentheses/brackets
+    .replace(/\s*-\s*.*(remaster|radio|live|single|deluxe|version|mono|stereo|bonus|mix).*$/i, '')
+    .replace(/\s+feat\..*$/i, '')
+    .replace(/['"“”]/g, '')
+    .trim();
+
+  return { cleanTitle: cleanTitle || String(title || '').trim(), cleanArtist };
+}
+
+export function cleanTrackTitleAndArtist(title: string, artist?: string) {
+  let cleanArtist = String(artist || '')
+    .replace(/^\[['"]?|['"]?\]$/g, '') // remove python list brackets ['...']
+    .replace(/['"]+/g, '') // remove inner quotes
+    .split(/[,;&\/]|(?:\s+feat\.?\s+)/i)[0] // primary artist
+    .replace(/^\[+|\]+$/g, '')
+    .trim();
+
+  if (cleanArtist === 'Unknown Artist' || cleanArtist === 'Various Artists') {
+    cleanArtist = '';
+  }
+
+  let cleanTitle = String(title || '')
+    .replace(/\(.*?\)|\[.*?\]/g, '') // remove parentheses/brackets
+    .replace(/\s*-\s*.*(remaster|radio|live|single|deluxe|version|mono|stereo|bonus|mix).*$/i, '')
+    .replace(/\s+feat\..*$/i, '')
+    .replace(/['"“”]/g, '')
+    .trim();
+
+  return { cleanTitle: cleanTitle || String(title || '').trim(), cleanArtist };
+}
+
 export class SpotifySearchService {
+  private readonly metadataRequests = new Map<
+    string,
+    Promise<{ coverImage: string; previewUrl: string; artistName: string } | null>
+  >();
+
   /**
    * Transforms raw iTunes thumbnail URLs to 600x600 high-resolution artwork
    */
@@ -160,19 +209,17 @@ export class SpotifySearchService {
   }
 
   /**
-   * Search real songs via global music catalogue API
+   * Searches the global media provider catalogue (iTunes/Deezer bridge).
+   * Primary search path: returns real posters, artist names and 30s previews.
    */
-  public async searchTracks(query: string, limit: number = 8): Promise<SpotifySearchResultItem[]> {
-    if (!query.trim()) return [];
-
+  public async searchMediaProvider(term: string, limit: number = 8): Promise<SpotifySearchResultItem[]> {
     try {
-      const url = `https://itunes.apple.com/search?term=${encodeURIComponent(
-        query.trim()
-      )}&entity=song&limit=${limit}`;
+      const url = `/api/media/search?term=${encodeURIComponent(term.trim())}&limit=${limit}`;
 
       const res = await fetch(url);
       if (!res.ok) {
-        throw new Error(`Music search failed: ${res.statusText}`);
+        console.warn(`Media provider search failed: ${res.status}`);
+        return [];
       }
 
       const data = await res.json();
@@ -180,50 +227,46 @@ export class SpotifySearchService {
         return [];
       }
 
-      interface ITunesItem {
-        trackId?: number;
-        trackName?: string;
-        artistName?: string;
-        collectionName?: string;
-        releaseDate?: string;
-        primaryGenreName?: string;
+      interface MediaItem {
+        id?: string;
+        title?: string;
+        artist?: string;
+        album?: string;
+        releaseYear?: number;
+        genre?: string;
         previewUrl?: string;
-        artworkUrl100?: string;
-        trackTimeMillis?: number;
+        coverImage?: string;
+        durationSeconds?: number;
       }
 
-      return data.results.map((item: ITunesItem, idx: number) => {
-        const title = item.trackName || 'Untitled Track';
-        const artist = item.artistName || 'Unknown Artist';
-        const album = item.collectionName || `${title} - Single`;
-        const releaseYear = item.releaseDate
-          ? parseInt(item.releaseDate.substring(0, 4), 10)
-          : 2022;
-        const genre = mapGenre(item.primaryGenreName);
+      const defaultBpmMap: Record<MusicGenre, number> = {
+        'Synthwave': 118,
+        'Cyber Techno': 128,
+        'Nu-Disco / Pop': 120,
+        'Lo-Fi Chill': 80,
+        'Indie Folk': 105,
+        'Neo-Soul / R&B': 92,
+        'Cinematic Ambient': 65,
+        'Alt Rock': 130,
+      };
+
+      return data.results.map((item: MediaItem, idx: number) => {
+        const title = item.title || 'Untitled Track';
+        const artist = item.artist || 'Unknown Artist';
+        const album = item.album || `${title} - Single`;
+        const releaseYear = Number(item.releaseYear) || 2022;
+        const genre = mapGenre(item.genre);
         const previewUrl = item.previewUrl || '';
-        const coverImage = this.formatCoverImage(item.artworkUrl100);
-        const durationSeconds = item.trackTimeMillis
-          ? Math.round(item.trackTimeMillis / 1000)
-          : 210;
+        const coverImage = this.formatCoverImage(item.coverImage);
+        const durationSeconds = Number(item.durationSeconds) || 210;
 
-        // Estimated BPM based on genre
-        const defaultBpmMap: Record<MusicGenre, number> = {
-          'Synthwave': 118,
-          'Cyber Techno': 128,
-          'Nu-Disco / Pop': 120,
-          'Lo-Fi Chill': 80,
-          'Indie Folk': 105,
-          'Neo-Soul / R&B': 92,
-          'Cinematic Ambient': 65,
-          'Alt Rock': 130,
-        };
         const bpm = defaultBpmMap[genre];
-
         const vector = estimateVectorFromTrack(genre, bpm);
-        const spotifyId = `custom-${item.trackId || idx}-${Math.random().toString(36).slice(2, 7)}`;
+        const providerId = item.id || String(idx);
+        const spotifyId = `custom-${providerId}-${Math.random().toString(36).slice(2, 7)}`;
 
         return {
-          id: `real-${item.trackId || idx}`,
+          id: `real-${providerId}`,
           title,
           artist,
           album,
@@ -247,36 +290,207 @@ export class SpotifySearchService {
         };
       });
     } catch (err) {
-      console.error('Failed to search real songs:', err);
+      console.warn('Media provider search error:', err);
       return [];
     }
   }
 
   /**
-   * Fetches metadata for a single track title and optional artist
+   * Searches the full PostgreSQL tracks table (all 50,000 container tracks) through the bridge
+   */
+  public async searchDatabase(query: string, limit: number = 12): Promise<SpotifySearchResultItem[]> {
+    try {
+      const res = await fetch(
+        `/api/tracks/search?q=${encodeURIComponent(query.trim())}&limit=${limit}`
+        `/api/tracks/search?q=${encodeURIComponent(query.trim())}&limit=${limit}`
+      );
+      if (!res.ok) return [];
+      const rows = await res.json();
+      if (!Array.isArray(rows)) return [];
+
+      return rows.map((row: any): SpotifySearchResultItem => {
+        const id = String(row.track_id);
+        const title = row.title || `Track #${id}`;
+        const artist = row.artist || 'Unknown Artist';
+        const bpm = Number(row.bpm) || 120;
+        const energy = Number(row.energy ?? 0.5);
+        const danceability = Number(row.danceability ?? 0.5);
+        const valence = Number(row.valence ?? 0.5);
+        const acousticness = Number(row.acousticness ?? 0.5);
+        const instrumentalness = Number(row.instrumentalness ?? 0.1);
+        const genre = (row.genre === 'Uncategorized' ? 'Nu-Disco / Pop' : row.genre) as MusicGenre;
+        const looksLikeSpotifyId = /^[A-Za-z0-9]{22}$/.test(id);
+
+        return {
+          id,
+          title,
+          artist,
+          album: 'Single',
+          genre,
+          releaseYear: 2022,
+          bpm,
+          durationSeconds: Number(row.duration) || 180,
+          coverImage: this.formatCoverImage(row.cover_image),
+          previewUrl: row.preview_url || '',
+          spotifyId: id,
+          spotifyUrl: looksLikeSpotifyId
+            ? `https://open.spotify.com/track/${id}`
+            : `https://open.spotify.com/search/${encodeURIComponent(`${artist}${title}`)}`,
+          audioFeatures: { danceability, energy, valence, tempo: bpm, acousticness, instrumentalness },
+          vector: {
+            danceability,
+            energy,
+            valence,
+            beatsBpmNormalized: bpmToNormalized(bpm),
+            vibeChillToHype: Number(((energy + danceability) / 2).toFixed(2)),
+            acousticness,
+            instrumentalness,
+            moodHarmonics: 0.5,
+          },
+        };
+      });
+    } catch (err) {
+      console.warn('Database search failed, falling back to iTunes:', err);
+      return [];
+    }
+  }
+
+  /**
+   * Search tracks: First queries the 50,000 container tracks table (case-insensitive).
+   * Enriches any matched container song with real iTunes audio preview and artwork.
+   * If not found in the container, searches the global iTunes catalogue.
+   * Search tracks: First queries the 50,000 container tracks table (case-insensitive).
+   * Enriches any matched container song with real iTunes audio preview and artwork.
+   * If not found in the container, searches the global iTunes catalogue.
+   */
+  public async searchTracks(query: string, limit: number = 12): Promise<SpotifySearchResultItem[]> {
+  public async searchTracks(query: string, limit: number = 12): Promise<SpotifySearchResultItem[]> {
+    if (!query.trim()) return [];
+
+    // 1. Search the media provider first: it returns real posters, artist names
+    //    and 30s previews immediately.
+    const apiHits = await this.searchMediaProvider(query, limit);
+    if (apiHits.length > 0) return apiHits;
+
+    // 2. Fall back to the 50,000-track container only when the provider misses.
+    return this.searchDatabase(query, limit);
+  }
+
+  /**
+   * Fetches metadata for a single track title and optional artist directly from iTunes
+   * Fetches metadata for a single track title and optional artist directly from iTunes
    */
   public async fetchSingleTrackMetadata(
     title: string,
     artist?: string
   ): Promise<{ coverImage: string; previewUrl: string; artistName: string } | null> {
-    try {
-      const cleanTitle = title.replace(/\(.*?\)|\[.*?\]/g, '').trim();
-      const cleanArtist = artist && artist !== 'Unknown Artist' ? artist.trim() : '';
-      const searchTerm = cleanArtist ? `${cleanTitle} ${cleanArtist}` : cleanTitle;
+    const { cleanTitle, cleanArtist } = cleanTrackTitleAndArtist(title, artist);
+    const cacheKey = `${cleanTitle.toLowerCase()}:::${cleanArtist.toLowerCase()}`;
+    const cached = this.metadataRequests.get(cacheKey);
+    if (cached) return cached;
 
-      const results = await this.searchTracks(searchTerm, 1);
-      if (results.length > 0) {
-        const match = results[0]!;
-        return {
-          coverImage: match.coverImage,
-          previewUrl: match.previewUrl,
-          artistName: match.artist,
-        };
-      }
+    const request = this.lookupTrackMetadata(title, artist);
+    this.metadataRequests.set(cacheKey, request);
+    void request.then((metadata) => {
+      if (!metadata) this.metadataRequests.delete(cacheKey);
+    });
+    return request;
+  }
+
+  private async lookupTrackMetadata(
+    title: string,
+    artist?: string
+  ): Promise<{ coverImage: string; previewUrl: string; artistName: string } | null> {
+    try {
+      const res = await fetch(
+        `/api/media/lookup?title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist || '')}`
+      );
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (!data.coverImage && !data.previewUrl && !data.artistName) return null;
+      return {
+        coverImage: data.coverImage || '',
+        previewUrl: data.previewUrl || '',
+        artistName: data.artistName || '',
+      };
     } catch (err) {
-      console.warn(`[iTunes Metadata Lookup Error] for ${title}:`, err);
+      console.warn(`[Media Metadata Lookup Error] for ${title}:`, err);
+      return null;
     }
-    return null;
+  }
+
+  public async enrichSongsWithItunes(
+    songs: Song[],
+    onSongEnriched: (song: Song) => void
+  ): Promise<void> {
+    // Only songs missing cover art / preview / artist need a provider lookup.
+    const pending = songs.filter(
+      (song) =>
+        !song.coverImage || !song.previewUrl || !song.artist || song.artist === 'Unknown Artist'
+    );
+    if (pending.length === 0) return;
+
+    // Enrich strictly sequentially with a gap: the Apple search API is heavily
+    // rate limited and a burst will get the whole IP blocked. Results are
+    // persisted server-side, so each track is only fetched once across reloads.
+    let nextIndex = 0;
+    const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    const enrichNextSong = async () => {
+      while (nextIndex < pending.length) {
+        const song = pending[nextIndex++]!;
+
+        const metadata = await this.fetchTrackMetadataFromBridge(song.id);
+        if (metadata) {
+          const enrichedSong: Song = {
+            ...song,
+            coverImage: metadata.coverImage || song.coverImage,
+            previewUrl: metadata.previewUrl || song.previewUrl,
+            artist:
+              (!song.artist || song.artist === 'Unknown Artist' || song.artist === 'Various Artists') &&
+              metadata.artistName
+                ? metadata.artistName
+                : song.artist,
+          };
+          if (
+            enrichedSong.coverImage !== song.coverImage ||
+            enrichedSong.previewUrl !== song.previewUrl ||
+            enrichedSong.artist !== song.artist
+          ) {
+            onSongEnriched(enrichedSong);
+          }
+        }
+
+        await delay(800);
+      }
+    };
+
+    await enrichNextSong();
+  }
+
+  private async fetchTrackMetadataFromBridge(
+    trackId: string
+  ): Promise<{ coverImage: string; previewUrl: string; artistName: string } | null> {
+    try {
+      const response = await fetch(
+        `/api/tracks/${encodeURIComponent(trackId)}/media/enrich`,
+        { method: 'POST' }
+      );
+      if (!response.ok) {
+        console.warn(`Media enrichment failed for track ${trackId}: ${response.status}`);
+        return null;
+      }
+
+      const metadata = await response.json();
+      return {
+        coverImage: metadata.coverImage || '',
+        previewUrl: metadata.previewUrl || '',
+        artistName: metadata.artistName || '',
+      };
+    } catch (err) {
+      console.warn(`Could not reach the media enrichment endpoint for track ${trackId}:`, err);
+      return null;
+    }
   }
 
   /**

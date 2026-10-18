@@ -1,7 +1,7 @@
-import { Song, MusicGenre } from '../../types/music';
+import { Song, MusicGenre, MusicVector } from '../../types/music';
 import { MOCK_SONG_CATALOG } from '../../data/mockCatalog';
 import { ADDITIONAL_SONG_SEEDS } from '../../data/additionalCatalog';
-import { vectorToPgVectorString, musicVectorToArray, bpmToNormalized } from './vectorMath';
+import { vectorToPgVectorString, musicVectorToArray, bpmToNormalized, cosineDistance } from './vectorMath';
 import { userDbService, UserDbRecord } from './userDbService';
 
 // ─── Table Row Interfaces ───────────────────────────────────────────────────
@@ -331,7 +331,7 @@ class RelationalDatabaseEngine {
     this.save();
   }
 
-  private insertSongInternal(song: Song, recordSql: boolean = true): TrackRow {
+  public insertSongInternal(song: Song, recordSql: boolean = true): TrackRow {
     // 1. Resolve or Insert Genre
     let genre = this.genres.find((g) => g.name.toLowerCase() === song.genre.toLowerCase());
     if (!genre) {
@@ -720,9 +720,12 @@ class RelationalDatabaseEngine {
    * 2. Writes or updates `listen_history` with rating = 5.0.
    * 3. Emits realistic PostgreSQL DML statements in audit logs.
    */
-  public toggleLikeSong(userId: number, trackCode: string): boolean {
+  public toggleLikeSong(userId: number, trackCode: string, songData?: Song): boolean {
     const favPlaylist = this.getOrCreateLikedSongsPlaylist(userId);
-    const track = this.resolveTrack(trackCode);
+    let track = this.resolveTrack(trackCode);
+    if (!track && songData) {
+      track = this.insertSongInternal(songData, false);
+    }
     if (!track) return false;
 
     const existingIndex = this.playlist_tracks.findIndex(
@@ -852,6 +855,33 @@ class RelationalDatabaseEngine {
 
   public getAllSongs(): Song[] {
     return this.tracks.map((t) => this.trackRowToSong(t));
+  }
+
+  public getSongById(id: string | number): Song | undefined {
+    const track = this.resolveTrack(id);
+    if (!track) return undefined;
+    return this.trackRowToSong(track);
+  }
+
+  /**
+   * Returns catalog tracks sorted by cosine distance to user taste vector
+   */
+  public getSongsSortedByTasteVector(
+    tasteVector: MusicVector | number[],
+    limit: number = 100
+  ): Song[] {
+    const all = this.getAllSongs();
+    const vecArr = Array.isArray(tasteVector) ? tasteVector : musicVectorToArray(tasteVector);
+
+    return all
+      .map((song) => {
+        const sVec = musicVectorToArray(song.vector);
+        const dist = cosineDistance(vecArr, sVec);
+        return { song, dist };
+      })
+      .sort((a, b) => a.dist - b.dist)
+      .slice(0, limit)
+      .map((item) => item.song);
   }
 
   public getTableStats(): TableSummary[] {
