@@ -280,42 +280,59 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Synchronize Catalog from PostgreSQL Container (100 tracks initial load)
-  useEffect(() => {
-    let isMounted = true;
+  // 2. Synchronize Catalog: 100 tracks dynamically loaded based on user's taste vector
+  const loadCatalog = useCallback(async (vectorParam?: MusicVector | number[]) => {
+    const vecArr = vectorParam
+      ? (Array.isArray(vectorParam) ? vectorParam : musicVectorToArray(vectorParam))
+      : (activeUser?.taste_vector || musicVectorToArray(targetVector));
 
-    async function loadCatalog() {
-      try {
-        const res = await fetch(`${API_BASE_URL}/tracks?limit=100`);
-        if (res.ok) {
-          const dbTracks = await res.json();
-          if (Array.isArray(dbTracks) && dbTracks.length > 0 && isMounted) {
-            const mappedSongs = dbTracks.map(mapDbTrackToSong);
-            setCatalog(mappedSongs);
-            pgVectorService.setCatalog(mappedSongs);
-            setCurrentSong((prev) => (prev ? prev : mappedSongs[0]!));
-            return;
-          }
+    const uid = activeUser?.user_id || 1;
+
+    try {
+      // 1. Query recommendations endpoint (performs pgvector KNN <=> distance to taste vector in postgres)
+      const recRes = await fetch(`${API_BASE_URL}/recommendations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vector: vecArr, limit: 100 }),
+      });
+      if (recRes.ok) {
+        const recData = await recRes.json();
+        const dbTracks = recData.recommendations || recData;
+        if (Array.isArray(dbTracks) && dbTracks.length > 0) {
+          const mappedSongs = dbTracks.map(mapDbTrackToSong);
+          setCatalog(mappedSongs);
+          pgVectorService.setCatalog(mappedSongs);
+          setCurrentSong((prev) => (prev ? prev : mappedSongs[0]!));
+          return;
         }
-      } catch (err) {
-        console.warn('PostgreSQL container not reachable for tracks, using fallback:', err);
       }
 
-      // Fallback to local relational simulation if container backend is offline
-      if (isMounted) {
-        const songs = relationalDbService.getAllSongs();
-        setCatalog(songs);
-        pgVectorService.setCatalog(songs);
-        if (songs.length > 0) setCurrentSong((prev) => (prev ? prev : songs[0]!));
+      // 2. Query GET /api/tracks with userId & vector
+      const res = await fetch(`${API_BASE_URL}/tracks?limit=100&userId=${uid}&vector=${encodeURIComponent(JSON.stringify(vecArr))}`);
+      if (res.ok) {
+        const dbTracks = await res.json();
+        if (Array.isArray(dbTracks) && dbTracks.length > 0) {
+          const mappedSongs = dbTracks.map(mapDbTrackToSong);
+          setCatalog(mappedSongs);
+          pgVectorService.setCatalog(mappedSongs);
+          setCurrentSong((prev) => (prev ? prev : mappedSongs[0]!));
+          return;
+        }
       }
+    } catch (err) {
+      console.warn('PostgreSQL container not reachable for taste-sorted tracks, using fallback:', err);
     }
 
-    loadCatalog();
+    // Fallback to local relational simulation sorted by user taste vector
+    const songs = relationalDbService.getSongsSortedByTasteVector(vecArr, 100);
+    setCatalog(songs);
+    pgVectorService.setCatalog(songs);
+    if (songs.length > 0) setCurrentSong((prev) => (prev ? prev : songs[0]!));
+  }, [activeUser?.user_id, activeUser?.taste_vector, targetVector]);
 
-    return () => {
-      isMounted = false;
-    };
-  }, [activeUser?.user_id]);
+  useEffect(() => {
+    loadCatalog();
+  }, [activeUser?.user_id, loadCatalog]);
 
   useEffect(() => {
     let isCurrentUser = true;
@@ -367,10 +384,14 @@ export default function App() {
     };
   }, [activeUser?.user_id]);
 
-  // 3. Synthesize user taste profile vector from listening history
+  // 3. Synthesize user taste profile vector from listening history AND liked songs
   const userTasteProfile = useMemo(() => {
-    return pgVectorService.synthesizeUserTaste(history);
-  }, [history]);
+    const likedSongs = Array.from(likedSongIds)
+      .map((id) => catalog.find((s) => s.id === id) || relationalDbService.getSongById(id))
+      .filter((s): s is Song => Boolean(s));
+
+    return pgVectorService.synthesizeUserTaste(history, likedSongs, targetVector);
+  }, [history, likedSongIds, catalog, targetVector]);
 
   // 4. Compute effective query vector by blending target vector with history taste vector
   const effectiveQueryVector = useMemo(() => {
@@ -558,56 +579,81 @@ export default function App() {
     }
   }, [catalog, currentSong, isPlaying, recordListeningSession]);
 
-  // Toggle Like
-  const handleToggleLike = async (songId: string) => {
+  // Toggle Like: Liked songs update taste vector without forcing addition to the 100-track catalog
+  const handleToggleLike = async (songId: string, songData?: Song) => {
     const uid = activeUser?.user_id || 1;
-    let response: Response;
+    const targetSong =
+      songData ||
+      catalog.find((s) => s.id === songId) ||
+      relationalDbService.getSongById(songId) ||
+      (currentSong?.id === songId ? currentSong : undefined);
+
+    let isNowLiked = false;
+    let newTasteVectorFromDb: number[] | null = null;
+
     try {
-      response = await fetch(`${API_BASE_URL}/users/${uid}/likes`, {
+      const response = await fetch(`${API_BASE_URL}/users/${uid}/likes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ trackId: songId }),
+        body: JSON.stringify({ trackId: songId, song: targetSong }),
       });
-    } catch (err) {
-      console.warn('Could not sync like to PostgreSQL, using local likes:', err);
-      const isNowLiked = relationalDbService.toggleLikeSong(uid, songId);
-      setLikedSongIds(relationalDbService.getLikedSongCodes(uid));
-      setHistory((prev) =>
-        prev.map((r) => (r.songId === songId ? { ...r, userLiked: isNowLiked } : r))
-      );
-      return;
-    }
 
-    if (!response.ok) {
-      const message = `Like request failed (${response.status})`;
-      console.error(message);
-      setLikesLoadError(message);
-      return;
-    }
-
-    try {
-      const result: { isLiked?: boolean } = await response.json();
-      if (typeof result.isLiked !== 'boolean') {
-        throw new Error('Like response did not include an isLiked value');
-      }
-      const isNowLiked = result.isLiked;
-      setLikesLoadError(null);
-
-      setLikedSongIds((current) => {
-        const updated = new Set(current);
-        if (isNowLiked) {
-          updated.add(songId);
-        } else {
-          updated.delete(songId);
+      if (response.ok) {
+        const result = await response.json();
+        if (typeof result.isLiked === 'boolean') {
+          isNowLiked = result.isLiked;
+          newTasteVectorFromDb = result.newTasteVector || null;
+          setLikesLoadError(null);
         }
-        return updated;
-      });
-      setHistory((prev) =>
-        prev.map((r) => (r.songId === songId ? { ...r, userLiked: isNowLiked } : r))
-      );
+      } else {
+        throw new Error(`Like request failed with status ${response.status}`);
+      }
     } catch (err) {
-      console.error('Could not read like status from PostgreSQL:', err);
-      setLikesLoadError('Could not read the like status from PostgreSQL');
+      console.warn('Could not sync like to PostgreSQL, using local relational store:', err);
+      isNowLiked = relationalDbService.toggleLikeSong(uid, songId, targetSong);
+    }
+
+    // Update likedSongIds state
+    setLikedSongIds((current) => {
+      const updated = new Set(current);
+      if (isNowLiked) {
+        updated.add(songId);
+      } else {
+        updated.delete(songId);
+      }
+      return updated;
+    });
+
+    // Update history liked status
+    setHistory((prev) =>
+      prev.map((r) => (r.songId === songId ? { ...r, userLiked: isNowLiked } : r))
+    );
+
+    // If targetSong exists, ensure local relational store knows about it for Playlists view
+    if (targetSong) {
+      relationalDbService.insertSongInternal(targetSong, false);
+    }
+
+    // Update taste vector in state from backend recalculation or local synthesis
+    if (newTasteVectorFromDb && Array.isArray(newTasteVectorFromDb) && newTasteVectorFromDb.length === 8) {
+      const newMusicVec = arrayToMusicVector(newTasteVectorFromDb);
+      setTargetVector(newMusicVec);
+      setActiveUser((prev) => (prev ? { ...prev, taste_vector: newTasteVectorFromDb } : null));
+    } else {
+      const currentLikedList = Array.from(likedSongIds)
+        .filter((id) => (isNowLiked ? true : id !== songId))
+        .map((id) => catalog.find((s) => s.id === id) || relationalDbService.getSongById(id))
+        .filter((s): s is Song => Boolean(s));
+
+      if (isNowLiked && targetSong && !currentLikedList.some((s) => s.id === targetSong.id)) {
+        currentLikedList.push(targetSong);
+      }
+
+      const calculated = pgVectorService.synthesizeUserTaste(history, currentLikedList, targetVector);
+      setTargetVector(calculated.tasteVector);
+      const calculatedArr = musicVectorToArray(calculated.tasteVector);
+      setActiveUser((prev) => (prev ? { ...prev, taste_vector: calculatedArr } : null));
+      userDbService.updateUserTasteVector(uid, calculatedArr);
     }
   };
 
@@ -906,23 +952,27 @@ export default function App() {
             <div className="p-6 rounded-2xl backdrop-blur-xl bg-[#0b0b10]/70 border border-white/10 ring-1 ring-white/5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="text-xl font-semibold text-white tracking-tight">
-                    Spotify &amp; PostgreSQL Catalog
+                  <h1 className="text-xl font-semibold text-white tracking-tight flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-violet-400" />
+                    <span>Taste-Aligned Catalog (100 Tracks)</span>
                   </h1>
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono bg-violet-500/20 text-violet-300 border border-violet-500/30">
+                    pgvector Cosine Nearest
+                  </span>
                 </div>
                 <p className="text-xs text-white/60 mt-1 max-w-xl">
-                  Seeded directly from your PostgreSQL container. Contains 8D acoustic embeddings for similarity vector searches.
+                  These 100 tracks are dynamically selected from PostgreSQL based on <strong>@{displayUser.username}</strong>'s 8D taste vector (calculated from listening history &amp; liked songs).
                 </p>
               </div>
 
               <div className="flex items-center gap-2.5 shrink-0">
                 <button
-                  onClick={() => handleExpandCatalog(8)}
+                  onClick={() => loadCatalog()}
                   className="px-3.5 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-medium text-xs transition-all flex items-center gap-1.5 shadow-md shadow-violet-600/20"
-                  title="Fetch more rows from PostgreSQL container"
+                  title="Re-query top 100 tracks closest to user's updated taste vector"
                 >
-                  <PlusCircle className="w-4 h-4" />
-                  <span>Fetch More Tracks (+8)</span>
+                  <Sparkles className="w-4 h-4" />
+                  <span>Re-align 100 to Taste</span>
                 </button>
 
                 <button
@@ -930,7 +980,7 @@ export default function App() {
                   className="px-4 py-2.5 rounded-xl bg-white text-black font-semibold text-xs transition-all flex items-center gap-2 hover:bg-white/90 shadow-lg shadow-white/10"
                 >
                   <Search className="w-4 h-4" />
-                  <span>Search &amp; Import Any Track</span>
+                  <span>Preview &amp; Like Any Track</span>
                 </button>
               </div>
             </div>
@@ -1073,6 +1123,8 @@ export default function App() {
         onPlaySong={handlePlayToggle}
         currentPlayingSong={currentSong || catalog[0]!}
         isPlaying={isPlaying}
+        likedSongIds={likedSongIds}
+        onToggleLike={handleToggleLike}
       />
 
       {/* Taste Profile Modal */}

@@ -11,7 +11,7 @@ interface SongCardProps {
   isCurrentSong: boolean;
   isLiked: boolean;
   onPlayToggle: (song: Song) => void;
-  onLikeToggle: (songId: string) => void;
+  onLikeToggle: (songId: string, song?: Song) => void;
   onInspectVector: (song: Song) => void;
   onOpenSpotify?: (song: Song) => void;
   onAddToPlaylist?: (song: Song) => void;
@@ -224,7 +224,7 @@ export const SongCard: React.FC<SongCardProps> = ({
       {/* Action Footer: Like Button & Vector Inspector & Spotify */}
       <div className="flex items-center justify-between mt-4 pt-2.5 border-t border-white/5">
         <button
-          onClick={() => onLikeToggle(song.id)}
+          onClick={() => onLikeToggle(song.id, song)}
           className={`px-2.5 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 text-xs ${
             isLiked
               ? 'text-rose-400 bg-rose-500/10 hover:bg-rose-500/20'

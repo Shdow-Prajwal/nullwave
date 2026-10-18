@@ -240,41 +240,133 @@ app.post('/api/recommendations', async (req, res) => {
 });
 
 // ── 4. Tracks & Audio Features ──────────────────────────────────────────
-// Consolidated GET /api/tracks with artist aggregation and live iTunes metadata enrichment
+// Consolidated GET /api/tracks with pgvector taste-based sorting and iTunes enrichment
 app.get('/api/tracks', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit, 10) || 100;
-    const query = `
-      SELECT 
-        t.track_id,
-        t.title,
-        t.duration,
-        t.bpm,
-        COALESCE(g.name, 'Nu-Disco / Pop') AS genre,
-        COALESCE(STRING_AGG(a.name, ', '), 'Unknown Artist') AS artist,
-        t.cover_image,
-        t.preview_url,
-        af.energy,
-        af.danceability,
-        af.valence,
-        af.acousticness,
-        af.instrumentalness,
-        af.liveness,
-        af.speechiness,
-        af.tempo_norm,
-        af.feature_vector::text
-      FROM tracks t
-      LEFT JOIN audio_features af ON t.track_id = af.track_id
-      LEFT JOIN performs p ON t.track_id = p.track_id
-      LEFT JOIN artist a ON p.artist_id = a.artist_id
-      LEFT JOIN genre g ON t.genre_id = g.genre_id
-      GROUP BY t.track_id, t.title, t.duration, t.bpm, g.name, t.cover_image, t.preview_url,
-               af.energy, af.danceability, af.valence, af.acousticness, af.instrumentalness,
-               af.liveness, af.speechiness, af.tempo_norm, af.feature_vector
-      ORDER BY t.track_id ASC
-      LIMIT $1;
-    `;
-    const { rows } = await pool.query(query, [limit]);
+    const userId = req.query.userId ? parseInt(req.query.userId, 10) : null;
+    const vectorParam = req.query.vector;
+
+    let vectorStr = null;
+    if (vectorParam) {
+      try {
+        const parsed = typeof vectorParam === 'string' ? JSON.parse(vectorParam) : vectorParam;
+        if (Array.isArray(parsed) && parsed.length === 8) {
+          vectorStr = toPgVector(parsed);
+        }
+      } catch {
+        if (typeof vectorParam === 'string' && vectorParam.startsWith('[')) {
+          vectorStr = vectorParam;
+        }
+      }
+    }
+
+    let query;
+    let params;
+
+    if (vectorStr) {
+      params = [vectorStr, limit];
+      query = `
+        SELECT 
+          t.track_id,
+          t.title,
+          t.duration,
+          t.bpm,
+          COALESCE(g.name, 'Nu-Disco / Pop') AS genre,
+          COALESCE(STRING_AGG(a.name, ', '), 'Unknown Artist') AS artist,
+          t.cover_image,
+          t.preview_url,
+          af.energy,
+          af.danceability,
+          af.valence,
+          af.acousticness,
+          af.instrumentalness,
+          af.liveness,
+          af.speechiness,
+          af.tempo_norm,
+          af.feature_vector::text,
+          (af.feature_vector <=> $1::vector) AS distance,
+          ROUND((1 - (af.feature_vector <=> $1::vector))::numeric, 4) AS similarity
+        FROM tracks t
+        JOIN audio_features af ON t.track_id = af.track_id
+        LEFT JOIN performs p ON t.track_id = p.track_id
+        LEFT JOIN artist a ON p.artist_id = a.artist_id
+        LEFT JOIN genre g ON t.genre_id = g.genre_id
+        GROUP BY t.track_id, t.title, t.duration, t.bpm, g.name, t.cover_image, t.preview_url,
+                 af.energy, af.danceability, af.valence, af.acousticness, af.instrumentalness,
+                 af.liveness, af.speechiness, af.tempo_norm, af.feature_vector
+        ORDER BY af.feature_vector <=> $1::vector ASC
+        LIMIT $2;
+      `;
+    } else if (userId) {
+      params = [userId, limit];
+      query = `
+        SELECT 
+          t.track_id,
+          t.title,
+          t.duration,
+          t.bpm,
+          COALESCE(g.name, 'Nu-Disco / Pop') AS genre,
+          COALESCE(STRING_AGG(a.name, ', '), 'Unknown Artist') AS artist,
+          t.cover_image,
+          t.preview_url,
+          af.energy,
+          af.danceability,
+          af.valence,
+          af.acousticness,
+          af.instrumentalness,
+          af.liveness,
+          af.speechiness,
+          af.tempo_norm,
+          af.feature_vector::text,
+          (af.feature_vector <=> u.taste_vector) AS distance,
+          ROUND((1 - (af.feature_vector <=> u.taste_vector))::numeric, 4) AS similarity
+        FROM tracks t
+        JOIN audio_features af ON t.track_id = af.track_id
+        CROSS JOIN (SELECT taste_vector FROM users WHERE user_id = $1 LIMIT 1) u
+        LEFT JOIN performs p ON t.track_id = p.track_id
+        LEFT JOIN artist a ON p.artist_id = a.artist_id
+        LEFT JOIN genre g ON t.genre_id = g.genre_id
+        GROUP BY t.track_id, t.title, t.duration, t.bpm, g.name, t.cover_image, t.preview_url,
+                 af.energy, af.danceability, af.valence, af.acousticness, af.instrumentalness,
+                 af.liveness, af.speechiness, af.tempo_norm, af.feature_vector, u.taste_vector
+        ORDER BY af.feature_vector <=> u.taste_vector ASC
+        LIMIT $2;
+      `;
+    } else {
+      params = [limit];
+      query = `
+        SELECT 
+          t.track_id,
+          t.title,
+          t.duration,
+          t.bpm,
+          COALESCE(g.name, 'Nu-Disco / Pop') AS genre,
+          COALESCE(STRING_AGG(a.name, ', '), 'Unknown Artist') AS artist,
+          t.cover_image,
+          t.preview_url,
+          af.energy,
+          af.danceability,
+          af.valence,
+          af.acousticness,
+          af.instrumentalness,
+          af.liveness,
+          af.speechiness,
+          af.tempo_norm,
+          af.feature_vector::text
+        FROM tracks t
+        LEFT JOIN audio_features af ON t.track_id = af.track_id
+        LEFT JOIN performs p ON t.track_id = p.track_id
+        LEFT JOIN artist a ON p.artist_id = a.artist_id
+        LEFT JOIN genre g ON t.genre_id = g.genre_id
+        GROUP BY t.track_id, t.title, t.duration, t.bpm, g.name, t.cover_image, t.preview_url,
+                 af.energy, af.danceability, af.valence, af.acousticness, af.instrumentalness,
+                 af.liveness, af.speechiness, af.tempo_norm, af.feature_vector
+        ORDER BY t.track_id ASC
+        LIMIT $1;
+      `;
+    }
+    const { rows } = await pool.query(query, params);
 
     // Async enrichment for tracks missing artwork, audio previews, or artist names
     const enrichedRows = await Promise.all(
@@ -559,22 +651,174 @@ app.delete('/api/playlists/:playlistId/tracks/:trackId', async (req, res) => {
   }
 });
 
+// Helper: Recalculate user taste vector from listening history and liked songs
+async function recalculateTasteVector(userId) {
+  try {
+    const numUserId = parseInt(userId, 10);
+    if (isNaN(numUserId)) return null;
+
+    const sql = `
+      WITH user_signals AS (
+        -- 1. Explicit Likes from Favorites / Liked Songs playlist (strong positive weight = 2.5)
+        SELECT 
+          af.energy, af.danceability, af.valence, af.acousticness, 
+          af.instrumentalness, af.liveness, af.speechiness, af.tempo_norm,
+          2.5 AS weight
+        FROM playlist_tracks pt
+        JOIN playlists p ON pt.playlist_id = p.playlist_id
+        JOIN audio_features af ON pt.track_id::text = af.track_id::text
+        WHERE p.user_id = $1 AND p.title IN ('Favorites', 'Liked Songs')
+
+        UNION ALL
+
+        -- 2. Listening History (weight scaled by rating, default 4/2.5 = 1.6)
+        SELECT 
+          af.energy, af.danceability, af.valence, af.acousticness, 
+          af.instrumentalness, af.liveness, af.speechiness, af.tempo_norm,
+          (COALESCE(lh.rating, 4)::float / 2.5) AS weight
+        FROM (
+          SELECT track_id, rating FROM listen_history WHERE user_id = $1 ORDER BY last_played DESC LIMIT 100
+        ) lh
+        JOIN audio_features af ON lh.track_id::text = af.track_id::text
+      )
+      SELECT 
+        ROUND((SUM(energy * weight) / NULLIF(SUM(weight), 0))::numeric, 4) AS energy,
+        ROUND((SUM(danceability * weight) / NULLIF(SUM(weight), 0))::numeric, 4) AS danceability,
+        ROUND((SUM(valence * weight) / NULLIF(SUM(weight), 0))::numeric, 4) AS valence,
+        ROUND((SUM(acousticness * weight) / NULLIF(SUM(weight), 0))::numeric, 4) AS acousticness,
+        ROUND((SUM(instrumentalness * weight) / NULLIF(SUM(weight), 0))::numeric, 4) AS instrumentalness,
+        ROUND((SUM(liveness * weight) / NULLIF(SUM(weight), 0))::numeric, 4) AS liveness,
+        ROUND((SUM(speechiness * weight) / NULLIF(SUM(weight), 0))::numeric, 4) AS speechiness,
+        ROUND((SUM(tempo_norm * weight) / NULLIF(SUM(weight), 0))::numeric, 4) AS tempo_norm,
+        COUNT(*)::int AS signal_count
+      FROM user_signals;
+    `;
+
+    const res = await pool.query(sql, [numUserId]);
+    const row = res.rows[0];
+
+    if (row && row.danceability !== null && row.signal_count > 0) {
+      const energy = Number(row.energy) || 0.5;
+      const danceability = Number(row.danceability) || 0.5;
+      const valence = Number(row.valence) || 0.5;
+      const tempo_norm = Number(row.tempo_norm) || 0.5;
+      const vibe = Number(((energy + danceability) / 2).toFixed(4)) || 0.5;
+      const acousticness = Number(row.acousticness) || 0.5;
+      const instrumentalness = Number(row.instrumentalness) || 0.1;
+      const moodHarmonics = 0.5;
+
+      const vector = [danceability, energy, valence, tempo_norm, vibe, acousticness, instrumentalness, moodHarmonics];
+      const vectorStr = toPgVector(vector);
+
+      await pool.query(
+        `UPDATE users SET taste_vector = $1::vector WHERE user_id = $2;`,
+        [vectorStr, numUserId]
+      );
+      console.log(`[DB] Recalculated 8D taste vector for user ${numUserId} from ${row.signal_count} signal(s): ${vectorStr}`);
+      return vector;
+    }
+  } catch (err) {
+    console.warn(`[DB] Recalculate taste vector note for user ${userId}:`, err.message);
+  }
+  return null;
+}
+
+app.post('/api/users/:userId/recalculate-taste', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const newVector = await recalculateTasteVector(userId);
+    res.json({ success: true, userId: Number(userId), tasteVector: newVector });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/users/:userId/likes', async (req, res) => {
   const { userId } = req.params;
-  const { trackId } = req.body;
+  const { trackId, song } = req.body;
   if (trackId === undefined || trackId === null) {
     return res.status(400).json({ error: 'trackId is required' });
   }
   const strTrackId = String(trackId);
 
   try {
+    // 1. Check if track exists in tracks table; if not and song metadata provided, auto-insert
+    if (song) {
+      try {
+        const check = await pool.query('SELECT track_id FROM tracks WHERE track_id::text = $1;', [strTrackId]);
+        if (check.rows.length === 0) {
+          await pool.query(
+            `INSERT INTO tracks (track_id, title, duration, bpm, genre_id, cover_image, preview_url)
+             VALUES ($1, $2, $3, $4, 1, $5, $6)
+             ON CONFLICT (track_id) DO UPDATE SET cover_image = EXCLUDED.cover_image, preview_url = EXCLUDED.preview_url;`,
+            [
+              strTrackId,
+              song.title || `Track #${strTrackId}`,
+              song.durationSeconds || 180,
+              song.bpm || 120,
+              song.coverImage || null,
+              song.previewUrl || null,
+            ]
+          );
+
+          if (song.artist && song.artist !== 'Unknown Artist') {
+            let artRes = await pool.query('SELECT artist_id FROM artist WHERE name = $1;', [song.artist]);
+            let artistId = artRes.rows[0]?.artist_id;
+            if (!artistId) {
+              const createdArt = await pool.query('INSERT INTO artist (name) VALUES ($1) RETURNING artist_id;', [song.artist]);
+              artistId = createdArt.rows[0]?.artist_id;
+            }
+            if (artistId) {
+              await pool.query(
+                'INSERT INTO performs (artist_id, track_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING;',
+                [artistId, strTrackId, 'main']
+              );
+            }
+          }
+
+          const rawVec = song.vector
+            ? (Array.isArray(song.vector) ? song.vector : [
+                song.vector.danceability ?? 0.5,
+                song.vector.energy ?? 0.5,
+                song.vector.valence ?? 0.5,
+                song.vector.beatsBpmNormalized ?? 0.5,
+                song.vector.vibeChillToHype ?? 0.5,
+                song.vector.acousticness ?? 0.5,
+                song.vector.instrumentalness ?? 0.1,
+                song.vector.moodHarmonics ?? 0.5,
+              ])
+            : [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.1, 0.5];
+
+          await pool.query(
+            `INSERT INTO audio_features (
+               track_id, energy, danceability, valence, acousticness, instrumentalness, liveness, speechiness, tempo_norm, feature_vector
+             ) VALUES ($1, $2, $3, $4, $5, $6, 0.5, 0.1, $7, $8::vector)
+             ON CONFLICT (track_id) DO NOTHING;`,
+            [
+              strTrackId,
+              rawVec[1],
+              rawVec[0],
+              rawVec[2],
+              rawVec[5],
+              rawVec[6],
+              rawVec[3],
+              toPgVector(rawVec),
+            ]
+          );
+          console.log(`[DB] Auto-inserted track "${song.title}" (${strTrackId}) into tracks & audio_features for user like`);
+        }
+      } catch (insertErr) {
+        console.warn('[DB Track Insert Warning on Like]:', insertErr.message);
+      }
+    }
+
     const existing = await pool.query(
       `SELECT pt.playlist_id
        FROM playlist_tracks pt
        JOIN playlists p ON p.playlist_id = pt.playlist_id
        WHERE p.user_id = $1
          AND p.title IN ('Favorites', 'Liked Songs')
-         AND pt.track_id = $2
+         AND pt.track_id::text = $2
        LIMIT 1;`,
       [userId, strTrackId]
     );
@@ -586,11 +830,12 @@ app.post('/api/users/:userId/likes', async (req, res) => {
          WHERE pt.playlist_id = p.playlist_id
            AND p.user_id = $1
            AND p.title IN ('Favorites', 'Liked Songs')
-           AND pt.track_id = $2;`,
+           AND pt.track_id::text = $2;`,
         [userId, strTrackId]
       );
       console.log(`[DB] User ${userId} unliked track "${strTrackId}"`);
-      return res.json({ success: true, trackId: strTrackId, isLiked: false });
+      const updatedTaste = await recalculateTasteVector(userId);
+      return res.json({ success: true, trackId: strTrackId, isLiked: false, newTasteVector: updatedTaste });
     }
 
     let plRes = await pool.query(
@@ -618,7 +863,9 @@ app.post('/api/users/:userId/likes', async (req, res) => {
       [playlistId, strTrackId]
     );
     console.log(`[DB] User ${userId} liked track "${strTrackId}" in playlist ${playlistId}`);
-    res.json({ success: true, trackId: strTrackId, isLiked: true });
+
+    const updatedTaste = await recalculateTasteVector(userId);
+    res.json({ success: true, trackId: strTrackId, isLiked: true, newTasteVector: updatedTaste });
   } catch (err) {
     console.error('[DB Error in toggle like]:', err.message);
     res.status(500).json({ error: err.message });
@@ -638,7 +885,10 @@ app.post('/api/listen-history', async (req, res) => {
       [userId || 1, strTrackId, rating]
     );
     console.log(`[DB] Inserted listen session (user_id: ${userId || 1}, track_id: "${strTrackId}", rating: ${rating})`);
-    res.json({ success: true, historyRecord: result.rows[0] });
+
+    // Dynamically recalculate taste vector from new listening session
+    const updatedTaste = await recalculateTasteVector(userId || 1);
+    res.json({ success: true, historyRecord: result.rows[0], newTasteVector: updatedTaste });
   } catch (err) {
     console.error('[DB Error in listen history]:', err.message);
     res.status(500).json({ error: err.message });
