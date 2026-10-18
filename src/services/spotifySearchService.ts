@@ -172,6 +172,28 @@ export function cleanTrackTitleAndArtist(title: string, artist?: string) {
   return { cleanTitle: cleanTitle || String(title || '').trim(), cleanArtist };
 }
 
+export function cleanTrackTitleAndArtist(title: string, artist?: string) {
+  let cleanArtist = String(artist || '')
+    .replace(/^\[['"]?|['"]?\]$/g, '') // remove python list brackets ['...']
+    .replace(/['"]+/g, '') // remove inner quotes
+    .split(/[,;&\/]|(?:\s+feat\.?\s+)/i)[0] // primary artist
+    .replace(/^\[+|\]+$/g, '')
+    .trim();
+
+  if (cleanArtist === 'Unknown Artist' || cleanArtist === 'Various Artists') {
+    cleanArtist = '';
+  }
+
+  let cleanTitle = String(title || '')
+    .replace(/\(.*?\)|\[.*?\]/g, '') // remove parentheses/brackets
+    .replace(/\s*-\s*.*(remaster|radio|live|single|deluxe|version|mono|stereo|bonus|mix).*$/i, '')
+    .replace(/\s+feat\..*$/i, '')
+    .replace(/['"“”]/g, '')
+    .trim();
+
+  return { cleanTitle: cleanTitle || String(title || '').trim(), cleanArtist };
+}
+
 export class SpotifySearchService {
   private readonly metadataRequests = new Map<
     string,
@@ -280,6 +302,7 @@ export class SpotifySearchService {
     try {
       const res = await fetch(
         `/api/tracks/search?q=${encodeURIComponent(query.trim())}&limit=${limit}`
+        `/api/tracks/search?q=${encodeURIComponent(query.trim())}&limit=${limit}`
       );
       if (!res.ok) return [];
       const rows = await res.json();
@@ -336,7 +359,11 @@ export class SpotifySearchService {
    * Search tracks: First queries the 50,000 container tracks table (case-insensitive).
    * Enriches any matched container song with real iTunes audio preview and artwork.
    * If not found in the container, searches the global iTunes catalogue.
+   * Search tracks: First queries the 50,000 container tracks table (case-insensitive).
+   * Enriches any matched container song with real iTunes audio preview and artwork.
+   * If not found in the container, searches the global iTunes catalogue.
    */
+  public async searchTracks(query: string, limit: number = 12): Promise<SpotifySearchResultItem[]> {
   public async searchTracks(query: string, limit: number = 12): Promise<SpotifySearchResultItem[]> {
     if (!query.trim()) return [];
 
@@ -350,6 +377,7 @@ export class SpotifySearchService {
   }
 
   /**
+   * Fetches metadata for a single track title and optional artist directly from iTunes
    * Fetches metadata for a single track title and optional artist directly from iTunes
    */
   public async fetchSingleTrackMetadata(

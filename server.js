@@ -627,6 +627,7 @@ app.post('/api/tracks/:trackId/media/enrich', async (req, res) => {
 app.get('/api/tracks/search', async (req, res) => {
   const q = String(req.query.q || '').trim();
   const limit = Math.min(parseInt(req.query.limit, 10) || 12, 50);
+  const limit = Math.min(parseInt(req.query.limit, 10) || 12, 50);
   if (!q) return res.json([]);
 
   try {
