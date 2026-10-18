@@ -22,7 +22,7 @@ interface PlaylistsViewProps {
   currentSong: Song | null;
   isPlaying: boolean;
   onPlaySong: (song: Song) => void;
-  onToggleLike: (songId: string) => void;
+  onToggleLike: (songId: string, song?: Song) => void;
   likedSongIds: Set<string>;
   allSongs: Song[];
   onInspectVector: (song: Song) => void;

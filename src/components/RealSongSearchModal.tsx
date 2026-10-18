@@ -10,10 +10,13 @@ import {
   Loader2,
   Disc,
   Activity,
+  Heart,
+  Radio,
+  Check,
+  Volume2,
 } from 'lucide-react';
 import { Song } from '../types/music';
 import { spotifySearchService, SpotifySearchResultItem } from '../services/spotifySearchService';
-import { audioSynthesizer } from '../services/audioSynthesizer';
 
 interface RealSongSearchModalProps {
   isOpen: boolean;
@@ -22,6 +25,8 @@ interface RealSongSearchModalProps {
   onPlaySong: (song: Song) => void;
   currentPlayingSong: Song | null;
   isPlaying: boolean;
+  likedSongIds: Set<string>;
+  onToggleLike: (songId: string, song?: Song) => void;
 }
 
 const POPULAR_SEARCH_SUGGESTIONS = [
@@ -44,6 +49,8 @@ export const RealSongSearchModal: React.FC<RealSongSearchModalProps> = ({
   onPlaySong,
   currentPlayingSong,
   isPlaying,
+  likedSongIds,
+  onToggleLike,
 }) => {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
@@ -57,7 +64,7 @@ export const RealSongSearchModal: React.FC<RealSongSearchModalProps> = ({
     setLoading(true);
     setQuery(searchTerm);
     try {
-      const items = await spotifySearchService.searchTracks(searchTerm, 8);
+      const items = await spotifySearchService.searchTracks(searchTerm, 12);
       setResults(items);
     } catch (err) {
       console.error('Search error:', err);
@@ -87,15 +94,20 @@ export const RealSongSearchModal: React.FC<RealSongSearchModalProps> = ({
         {/* Header */}
         <div className="p-5 border-b border-neutral-800 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-pink-500 to-rose-600 flex items-center justify-center text-white shadow-md">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-rose-500 to-pink-600 flex items-center justify-center text-white shadow-md">
               <Search className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-extrabold text-white">
-                Search Any Real Song
-              </h2>
-              <p className="text-xs text-neutral-400">
-                Live search millions of tracks via Spotify & Apple Music API
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-extrabold text-white">
+                  Search &amp; Preview Songs
+                </h2>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                  Instant Preview &amp; Like
+                </span>
+              </div>
+              <p className="text-xs text-neutral-400 mt-0.5">
+                Listen to 30s studio previews and like any track directly without having to add it to your 50-song catalog
               </p>
             </div>
           </div>
@@ -106,6 +118,16 @@ export const RealSongSearchModal: React.FC<RealSongSearchModalProps> = ({
           >
             ✕
           </button>
+        </div>
+
+        {/* Feature Hint Banner */}
+        <div className="px-5 py-2.5 bg-rose-500/10 border-b border-rose-500/20 flex items-center justify-between text-xs text-rose-200">
+          <div className="flex items-center gap-2">
+            <Heart className="w-3.5 h-3.5 fill-rose-500 text-rose-500 shrink-0" />
+            <span>
+              <strong>Direct Liking Enabled:</strong> Click the heart on any track to save it to your Liked Songs playlist &amp; auto-recalculate your taste vector without bloating your catalog.
+            </span>
+          </div>
         </div>
 
         {/* Search Input and Suggestions */}
@@ -150,7 +172,7 @@ export const RealSongSearchModal: React.FC<RealSongSearchModalProps> = ({
           {loading && (
             <div className="py-12 text-center text-neutral-400 space-y-2">
               <Loader2 className="w-6 h-6 animate-spin mx-auto text-rose-500" />
-              <p className="text-xs">Searching global catalogue & audio previews...</p>
+              <p className="text-xs">Searching global catalogue &amp; audio previews...</p>
             </div>
           )}
 
@@ -158,7 +180,7 @@ export const RealSongSearchModal: React.FC<RealSongSearchModalProps> = ({
             <div className="py-12 text-center text-neutral-500 space-y-2">
               <Disc className="w-10 h-10 mx-auto text-neutral-700" />
               <p className="text-xs">
-                Type an artist or song name above to find real studio tracks and previews.
+                Type an artist or song name above to find studio tracks, play 30s previews, and like tracks.
               </p>
             </div>
           )}
@@ -168,15 +190,20 @@ export const RealSongSearchModal: React.FC<RealSongSearchModalProps> = ({
               const isAdded = addedIds.has(item.id);
               const song = spotifySearchService.convertToSong(item);
               const isThisPlaying = currentPlayingSong?.id === song.id && isPlaying;
+              const isLiked = likedSongIds.has(item.id) || likedSongIds.has(song.id);
 
               return (
                 <div
                   key={item.id}
-                  className="p-3 rounded-2xl bg-neutral-950/70 border border-neutral-800/80 hover:border-neutral-700 transition-all flex items-center justify-between gap-3 group"
+                  className={`p-3.5 rounded-2xl border transition-all flex items-center justify-between gap-3 group ${
+                    isThisPlaying
+                      ? 'bg-rose-950/20 border-rose-500/40 shadow-lg shadow-rose-950/30'
+                      : 'bg-neutral-950/70 border-neutral-800/80 hover:border-neutral-700'
+                  }`}
                 >
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    {/* Cover Art / Play Button */}
-                    <div className="relative w-12 h-12 rounded-xl overflow-hidden shrink-0 group/cover">
+                  <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                    {/* Cover Art / Audio Preview Play Button */}
+                    <div className="relative w-14 h-14 rounded-xl overflow-hidden shrink-0 group/cover shadow-md">
                       {item.coverImage ? (
                         <img
                           src={item.coverImage}
@@ -194,54 +221,103 @@ export const RealSongSearchModal: React.FC<RealSongSearchModalProps> = ({
                         className={`absolute inset-0 bg-black/60 flex items-center justify-center transition-opacity ${
                           isThisPlaying ? 'opacity-100' : 'opacity-0 group-hover/cover:opacity-100'
                         }`}
-                        title="Play audio preview"
+                        title={isThisPlaying ? 'Pause preview' : 'Play 30s studio preview'}
                       >
                         {isThisPlaying ? (
-                          <Pause className="w-5 h-5 text-rose-400 fill-current" />
+                          <Pause className="w-6 h-6 text-rose-400 fill-current" />
                         ) : (
-                          <Play className="w-5 h-5 text-white fill-current ml-0.5" />
+                          <Play className="w-6 h-6 text-white fill-current ml-0.5" />
                         )}
                       </button>
+
+                      {isThisPlaying && (
+                        <span className="absolute bottom-1 right-1 w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+                      )}
                     </div>
 
-                    {/* Metadata */}
+                    {/* Metadata & Preview Badge */}
                     <div className="min-w-0">
-                      <div className="font-bold text-sm text-white truncate group-hover:text-rose-300 transition-colors">
-                        {item.title}
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-sm text-white truncate group-hover:text-rose-300 transition-colors">
+                          {item.title}
+                        </span>
+                        {item.previewUrl ? (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 shrink-0 flex items-center gap-1">
+                            <Radio className="w-2.5 h-2.5" />
+                            <span>Preview</span>
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-violet-500/15 text-violet-300 border border-violet-500/25 shrink-0">
+                            Synth
+                          </span>
+                        )}
                       </div>
-                      <div className="text-xs text-neutral-400 truncate">
+
+                      <div className="text-xs text-neutral-400 truncate mt-0.5">
                         {item.artist} · <span className="text-neutral-500">{item.album}</span>
                       </div>
-                      <div className="flex items-center gap-2 mt-1 text-[11px] font-mono text-neutral-400">
+
+                      <div className="flex items-center gap-2 mt-1.5 text-[11px] font-mono text-neutral-400">
                         <span className="px-1.5 py-0.5 rounded bg-neutral-900 border border-neutral-800 text-neutral-300">
                           {item.genre}
                         </span>
                         <span>{item.releaseYear}</span>
                         <span>·</span>
                         <span className="text-cyan-400">{item.bpm} BPM</span>
+                        {isThisPlaying && (
+                          <span className="text-rose-400 font-sans font-medium flex items-center gap-1 ml-1 animate-pulse">
+                            <Volume2 className="w-3 h-3" />
+                            <span>Playing 30s preview</span>
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
 
-                  {/* Actions */}
+                  {/* Actions: Direct Like Button & Optional Add to Catalog */}
                   <div className="flex items-center gap-2 shrink-0">
+                    {/* Instant Like / Unlike Button (WITHOUT adding to catalog) */}
+                    <button
+                      onClick={() => onToggleLike(item.id, song)}
+                      className={`px-3 py-1.5 rounded-xl font-semibold text-xs transition-all flex items-center gap-1.5 border shadow-sm ${
+                        isLiked
+                          ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
+                          : 'bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-rose-400 border-neutral-800'
+                      }`}
+                      title={
+                        isLiked
+                          ? 'Unlike track (removes from Liked Songs playlist)'
+                          : 'Like track (saves to Liked Songs playlist & recalculates taste vector without adding to catalog)'
+                      }
+                    >
+                      <Heart
+                        className={`w-4 h-4 transition-transform ${
+                          isLiked ? 'fill-rose-500 text-rose-500 scale-110' : 'text-neutral-400'
+                        }`}
+                      />
+                      <span>{isLiked ? 'Liked' : 'Like'}</span>
+                    </button>
+
+                    {/* Secondary: Optional Add to Catalog */}
                     <button
                       onClick={() => handleAddTrack(item)}
                       disabled={isAdded}
-                      className={`px-3 py-1.5 rounded-xl font-semibold text-xs transition-all flex items-center gap-1.5 ${
+                      className={`px-2.5 py-1.5 rounded-xl font-medium text-xs transition-all flex items-center gap-1 border ${
                         isAdded
-                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 cursor-default'
-                          : 'bg-neutral-800 hover:bg-neutral-700 text-white hover:text-rose-300 border border-neutral-700'
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30 cursor-default'
+                          : 'bg-neutral-900 hover:bg-neutral-800 text-neutral-400 hover:text-white border-neutral-800'
                       }`}
+                      title="Add to visible 50-track catalog list"
                     >
                       {isAdded ? (
                         <>
-                          <span>Added</span>
+                          <Check className="w-3 h-3 text-emerald-400" />
+                          <span>In Catalog</span>
                         </>
                       ) : (
                         <>
-                          <Plus className="w-3.5 h-3.5 text-rose-400" />
-                          <span>Add to DB</span>
+                          <Plus className="w-3 h-3 text-neutral-400" />
+                          <span className="hidden sm:inline">Add to Catalog</span>
                         </>
                       )}
                     </button>
@@ -265,7 +341,7 @@ export const RealSongSearchModal: React.FC<RealSongSearchModalProps> = ({
         <div className="p-4 border-t border-neutral-800 bg-neutral-950/80 flex items-center justify-between text-xs text-neutral-400">
           <div className="flex items-center gap-2 font-mono text-[11px]">
             <Sparkles className="w-3.5 h-3.5 text-rose-400" />
-            <span>Tracks are automatically embedded into pgvector with 8D acoustic features</span>
+            <span>Previews stream directly. Liking recalibrates your 8D taste vector in real-time.</span>
           </div>
           <button
             onClick={onClose}
